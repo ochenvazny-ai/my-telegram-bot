@@ -1,67 +1,62 @@
 import os
-import socket
-import sys
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+import psycopg2
+from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
-from supabase import create_client
-from dotenv import load_dotenv
 
-load_dotenv()
+# ... (загрузка переменных окружения) ...
 
-SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_KEY = os.getenv("SUPABASE_KEY")
-BOT_TOKEN = os.getenv("BOT_TOKEN")
+# Используем данные из Session Pooler
+SUPABASE_DB_URL = os.getenv("SUPABASE_URL")  # Это должен быть URL Session Pooler
+SUPABASE_DB_KEY = os.getenv("SUPABASE_KEY")  # Это твой пароль от БД
 
-if not SUPABASE_URL or not SUPABASE_KEY or not BOT_TOKEN:
-    raise ValueError("Missing required environment variables")
-
-SUPABASE_URL = SUPABASE_URL.strip()
-SUPABASE_KEY = SUPABASE_KEY.strip()
-BOT_TOKEN = BOT_TOKEN.strip()
-
-# Диагностика DNS
-try:
-    ip = socket.gethostbyname('aws-0-eu-west-1.pooler.supabase.com')
-    print(f"✅ DNS OK: {ip}")
-except Exception as e:
-    print(f"❌ DNS FAILED: {e}")
-print(f"🔍 SUPABASE_URL = {repr(SUPABASE_URL)}")
-sys.stdout.flush()
-
-supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+def get_db_connection():
+    """Устанавливает соединение с базой данных через Session Pooler."""
+    try:
+        # Парсим URL для получения параметров подключения
+        # URL вида: postgresql://postgres.xxxx:password@aws-0-....pooler.supabase.com:5432/postgres
+        conn = psycopg2.connect(SUPABASE_DB_URL)
+        return conn
+    except Exception as e:
+        print(f"❌ Ошибка подключения к БД: {e}")
+        return None
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
-    try:
-        supabase.table('users').upsert({
-            'id': user.id,
-            'username': user.username,
-            'first_name': user.first_name
-        }, on_conflict='id').execute()
-    except Exception as e:
-        print(f"❌ Upsert error: {e}")
-        await update.message.reply_text("Ошибка сохранения данных.")
+    conn = get_db_connection()
+    if conn is None:
+        await update.message.reply_text("Ошибка подключения к базе данных.")
         return
 
-    admin_check = supabase.table('admins').select('*').eq('user_id', user.id).execute()
-    if admin_check.data:
-        keyboard = [[InlineKeyboardButton("👑 Админка", callback_data="admin")]]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        await update.message.reply_text(f"Привет, {user.first_name}! Ты админ.", reply_markup=reply_markup)
-    else:
-        await update.message.reply_text(f"Привет, {user.first_name}! Ты сохранён в базе.")
+    try:
+        cur = conn.cursor()
+        # Выполняем UPSERT (вставка или обновление)
+        cur.execute("""
+            INSERT INTO users (id, username, first_name, created_at)
+            VALUES (%s, %s, %s, NOW())
+            ON CONFLICT (id) DO UPDATE
+            SET username = EXCLUDED.username,
+                first_name = EXCLUDED.first_name,
+                created_at = NOW();
+        """, (user.id, user.username, user.first_name))
+        conn.commit()
+        cur.close()
 
-async def myid(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(f"Твой ID: {update.effective_user.id}")
+        # Проверяем, является ли пользователь админом
+        cur = conn.cursor()
+        cur.execute("SELECT * FROM admins WHERE user_id = %s;", (user.id,))
+        is_admin = cur.fetchone() is not None
+        cur.close()
 
-def main():
-    app = Application.builder().token(BOT_TOKEN).build()
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("myid", myid))
-    print("✅ Бот запущен с RLS и политиками!")
-    sys.stdout.flush()
-    # Запускаем polling с автоматическим сбросом вебхука
-    app.run_polling(drop_pending_updates=True)
+        if is_admin:
+            keyboard = [[InlineKeyboardButton("👑 Админка", callback_data="admin")]]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            await update.message.reply_text(f"Привет, {user.first_name}! Ты админ.", reply_markup=reply_markup)
+        else:
+            await update.message.reply_text(f"Привет, {user.first_name}! Ты сохранён в базе.")
 
-if __name__ == "__main__":
-    main()
+    except Exception as e:
+        print(f"❌ Ошибка запроса: {e}")
+        await update.message.reply_text("Произошла ошибка при работе с базой данных.")
+    finally:
+        if conn:
+            conn.close()
