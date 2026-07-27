@@ -1,4 +1,6 @@
 import os
+import asyncio
+import socket
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, ContextTypes
 from supabase import create_client
@@ -6,7 +8,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# Загрузка переменных с очисткой
+# Загрузка переменных
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 BOT_TOKEN = os.getenv("BOT_TOKEN")
@@ -18,9 +20,14 @@ SUPABASE_URL = SUPABASE_URL.strip()
 SUPABASE_KEY = SUPABASE_KEY.strip()
 BOT_TOKEN = BOT_TOKEN.strip()
 
-# Диагностика (удали после успешного запуска)
-print(f"DEBUG: SUPABASE_URL = {repr(SUPABASE_URL)}")
-print(f"DEBUG: BOT_TOKEN (first 5 chars) = {repr(BOT_TOKEN[:5])}")
+# Диагностика DNS (теперь точно будет в логах)
+try:
+    ip = socket.gethostbyname('xuejkkhzkiskgmptwcby.supabase.co')
+    print(f"DNS OK: IP = {ip}")
+except Exception as e:
+    print(f"DNS FAILED: {e}")
+
+print(f"SUPABASE_URL = {repr(SUPABASE_URL)}")
 
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
@@ -50,6 +57,12 @@ async def myid(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 def main():
     app = Application.builder().token(BOT_TOKEN).build()
+    
+    # Правильный сброс вебхука (синхронно через asyncio)
+    async def reset_webhook():
+        await app.bot.delete_webhook(drop_pending_updates=True)
+    asyncio.run(reset_webhook())
+    
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("myid", myid))
     print("✅ Бот запущен с RLS и политиками!")
