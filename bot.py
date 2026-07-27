@@ -1,7 +1,6 @@
 import os
 import socket
 import sys
-import asyncio
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, ContextTypes
 from supabase import create_client
@@ -43,6 +42,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         print(f"❌ Upsert error: {e}")
         await update.message.reply_text("Ошибка сохранения данных.")
         return
+
     admin_check = supabase.table('admins').select('*').eq('user_id', user.id).execute()
     if admin_check.data:
         keyboard = [[InlineKeyboardButton("👑 Админка", callback_data="admin")]]
@@ -54,20 +54,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def myid(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"Твой ID: {update.effective_user.id}")
 
-async def main():
+def main():
     app = Application.builder().token(BOT_TOKEN).build()
-    
-    # Сброс вебхука — теперь в том же event loop
-    await app.bot.delete_webhook(drop_pending_updates=True)
-    print("✅ Вебхук сброшен")
-    
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("myid", myid))
-    
     print("✅ Бот запущен с RLS и политиками!")
     sys.stdout.flush()
-    
-    await app.run_polling()
+    # Запускаем polling с автоматическим сбросом вебхука
+    app.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
