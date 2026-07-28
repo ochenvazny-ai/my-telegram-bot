@@ -1,5 +1,6 @@
 import logging
 import asyncio
+import io
 from datetime import datetime
 from telegram import Update
 from telegram.ext import ContextTypes
@@ -7,7 +8,7 @@ from telegram.ext import ContextTypes
 import database as db
 import keyboards as kb
 import schedule_service as sched
-from config import INITIAL_ADMIN_ID, BELL_SCHEDULE_REGULAR, BELL_SCHEDULE_PRE_HOLIDAY
+import schedule_image as sched_img
 
 logger = logging.getLogger(__name__)
 
@@ -15,23 +16,45 @@ INFO_TEXT = (
     "🤖 Бот для группы ИБ1-31\n\n"
     "📌 Как пользоваться:\n"
     "• Управляй ботом с помощью кнопок под сообщениями.\n\n"
-    "📅 Замены:\n"
-    "Показывает замены на день, указанный на сайте колледжа.\n"
-    "Формат вывода:\n"
-    "✨ РАСПИСАНИЕ ЗАНЯТИЙ НА ДАТА ✨\n"
-    "🔹 N урок | Предмет (Преподаватель) | Аудитория\n\n"
-    "🔍 Обозначения:\n"
-    "• [ЗАМЕНА] — пара была заменена.\n"
-    "• Если пара удалена — она не отображается.\n"
-    "• Дистант отображается как аудитория ДОТ.\n\n"
-    "📚 Домашка:\n"
-    "Показывает список АКТУАЛЬНЫХ домашних заданий.\n\n"
-    "📢 Объявления:\n"
-    "Показывает активные объявления от администрации.\n\n"
-    "📞 Расписание звонков:\n"
-    "Показывает обычное или предпраздничное расписание звонков на сегодня.\n\n"
-    "💡 Кнопка «Инфо» — снова покажет это сообщение.\n\n"
+    "📅 Замены — замены на день, указанный на сайте колледжа.\n"
+    "📚 Домашка — список актуальных домашних заданий.\n"
+    "📢 Объявления — активные объявления от администрации.\n"
+    "ℹ️ Инфо — расписание звонков и расписание пар.\n\n"
     "Успехов в учёбе! 📚"
+)
+
+BELLS_REGULAR_TEXT = (
+    "📞 Расписание звонков (обычные дни)\n\n"
+    "По А корпусу:\n"
+    "0 пара – 8:00 – 9:10\n"
+    "1 пара – 9:20 – 10:50\n"
+    "2 пара – 11:00 – 11:45, потом перерыв 40 мин, затем вторая часть с 12:25 до 13:10\n"
+    "3 пара – 13:20 – 14:50\n"
+    "4 пара – 15:05 – 16:35\n"
+    "5 пара – 17:05 – 18:35\n"
+    "6 пара – 18:45 – 19:55\n\n"
+    "По Б корпусу:\n"
+    "0 пара – 8:00 – 9:10\n"
+    "1 пара – 9:20 – 10:50\n"
+    "2 пара – 11:00 – 12:30 (сплошная, без разбивки), после неё перерыв 50 минут\n"
+    "3 пара – 13:20 – 14:50\n"
+    "4 пара – 15:05 – 16:35\n"
+    "5 пара – 17:05 – 18:35\n"
+    "6 пара – 18:45 – 19:55"
+)
+
+BELLS_PRE_HOLIDAY_TEXT = (
+    "📞 Расписание звонков (предпраздничный день)\n\n"
+    "Для всех корпусов. Занятия по 60 минут.\n"
+    "0 пара – 8:00 – 9:00\n"
+    "1 пара – 9:10 – 10:10\n"
+    "2 пара – 10:20 – 11:20\n"
+    "перемена 30 минут\n"
+    "3 пара – 11:50 – 12:50\n"
+    "4 пара – 13:00 – 14:00\n"
+    "5 пара – 14:10 – 15:10\n"
+    "6 пара – 15:20 – 16:20\n\n"
+    "Перемены между остальными парами – по 10 минут."
 )
 
 
@@ -104,20 +127,58 @@ async def show_announcements(update: Update, context: ContextTypes.DEFAULT_TYPE)
     await query.edit_message_text(text, reply_markup=kb.back_button())
 
 
-async def show_bells(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    today_mmdd = datetime.now().strftime("%m-%d")
-    is_ph = await asyncio.to_thread(db.is_pre_holiday_today, today_mmdd)
-    schedule = BELL_SCHEDULE_PRE_HOLIDAY if is_ph else BELL_SCHEDULE_REGULAR
-    title = "предпраздничный день" if is_ph else "обычное"
-    lines = [f"📞 РАСПИСАНИЕ ЗВОНКОВ ({title})\n"]
-    for name, start_t, end_t in schedule:
-        lines.append(f"{name}: {start_t} – {end_t}")
-    await query.edit_message_text("\n".join(lines), reply_markup=kb.back_button())
-
-
 async def show_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Раздел «Инфо» — теперь это подменю, а не статичный текст."""
     query = update.callback_query
     await query.answer()
-    await query.edit_message_text(INFO_TEXT, reply_markup=kb.back_button())
+    await query.edit_message_text("ℹ️ Инфо. Выберите раздел:", reply_markup=kb.info_menu_kb())
+
+
+async def show_bells_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    await query.edit_message_text("📞 Расписание звонков. Выберите тип дня:", reply_markup=kb.bells_choice_kb())
+
+
+async def show_bells_regular(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    await query.edit_message_text(BELLS_REGULAR_TEXT, reply_markup=kb.back_button("info_bells"))
+
+
+async def show_bells_preholiday(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    await query.edit_message_text(BELLS_PRE_HOLIDAY_TEXT, reply_markup=kb.back_button("info_bells"))
+
+
+async def show_sched_img_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    await query.edit_message_text("📚 Расписание пар. Выберите вариант:", reply_markup=kb.schedule_img_choice_kb())
+
+
+async def send_schedule_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    choice = query.data  # schedimg_num / schedimg_den / schedimg_cmp
+    await query.edit_message_text("⏳ Формирую изображение...")
+    try:
+        if choice == "schedimg_num":
+            img_bytes = await asyncio.to_thread(sched_img.render_schedule_image, "Числитель")
+        elif choice == "schedimg_den":
+            img_bytes = await asyncio.to_thread(sched_img.render_schedule_image, "Знаменатель")
+        else:
+            img_bytes = await asyncio.to_thread(sched_img.render_comparison_image)
+        await context.bot.send_photo(
+            chat_id=update.effective_chat.id,
+            photo=io.BytesIO(img_bytes),
+            reply_markup=kb.back_button("info_sched_img"),
+        )
+        await query.delete_message()
+    except Exception:
+        logger.exception("Не удалось сформировать изображение расписания")
+        await query.edit_message_text(
+            "❌ Не удалось сформировать изображение. Попробуйте позже.",
+            reply_markup=kb.back_button("info_sched_img"),
+        )
