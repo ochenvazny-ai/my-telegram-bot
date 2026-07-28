@@ -1,82 +1,187 @@
 import os
 import sys
-import psycopg2
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, ContextTypes
-from dotenv import load_dotenv
+import asyncio
+import logging
+import threading
+from http.server import HTTPServer, BaseHTTPRequestHandler
 
-load_dotenv()
+from telegram.ext import (
+    Application, CommandHandler, MessageHandler, CallbackQueryHandler,
+    ConversationHandler, filters,
+)
 
-# Берём полную строку подключения (Session Pooler URL с паролем)
-DATABASE_URL = os.getenv("DATABASE_URL")
-if not DATABASE_URL:
-    raise ValueError("DATABASE_URL не задана в переменных окружения")
+import database as db
+import handlers_user as hu
+import handlers_admin as ha
+from config import (
+    BOT_TOKEN, HW_TEXT, HW_DUE, ANN_TEXT, ANN_CONFIRM, PH_DATE,
+    SCHED_UPLOAD_TEXT, SCHED_FIELD_VALUE, ADMIN_ID, ADMIN_NAME,
+)
 
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-if not BOT_TOKEN:
-    raise ValueError("BOT_TOKEN не задан")
+logging.basicConfig(
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    level=logging.INFO,
+)
+logger = logging.getLogger(__name__)
 
-def get_db_connection():
-    """Создаёт и возвращает соединение с базой данных."""
-    try:
-        conn = psycopg2.connect(DATABASE_URL)
-        return conn
-    except Exception as e:
-        print(f"❌ Ошибка подключения к БД: {e}")
-        return None
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    conn = get_db_connection()
-    if conn is None:
-        await update.message.reply_text("Не удалось подключиться к базе данных. Попробуйте позже.")
-        return
+async def error_handler(update, context):
+    logger.error("Необработанное исключение:", exc_info=context.error)
 
-    try:
-        cur = conn.cursor()
 
-        # UPSERT пользователя (вставка или обновление)
-        cur.execute("""
-            INSERT INTO users (id, username, first_name, created_at)
-            VALUES (%s, %s, %s, NOW())
-            ON CONFLICT (id) DO UPDATE
-            SET username = EXCLUDED.username,
-                first_name = EXCLUDED.first_name,
-                created_at = NOW();
-        """, (user.id, user.username, user.first_name))
-        conn.commit()
-        cur.close()
+# ---------- Health-check сервер для Railway/Render ----------
+class HealthHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"OK")
 
-        # Проверка, является ли пользователь админом
-        cur = conn.cursor()
-        cur.execute("SELECT * FROM admins WHERE user_id = %s;", (user.id,))
-        is_admin = cur.fetchone() is not None
-        cur.close()
-        conn.close()
+    def log_message(self, format, *args):
+        pass
 
-        if is_admin:
-            keyboard = [[InlineKeyboardButton("👑 Админка", callback_data="admin")]]
-            reply_markup = InlineKeyboardMarkup(keyboard)
-            await update.message.reply_text(f"Привет, {user.first_name}! Ты админ.", reply_markup=reply_markup)
-        else:
-            await update.message.reply_text(f"Привет, {user.first_name}! Ты сохранён в базе.")
 
-    except Exception as e:
-        print(f"❌ Ошибка SQL: {e}")
-        await update.message.reply_text("Произошла ошибка при работе с базой данных.")
-        if conn:
-            conn.close()
+def run_health_server():
+    port = int(os.environ.get("PORT", 8000))
+    server = HTTPServer(("0.0.0.0", port), HealthHandler)
+    server.serve_forever()
 
-async def myid(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(f"Твой ID: {update.effective_user.id}")
+
+threading.Thread(target=run_health_server, daemon=True).start()
+
+
+def build_conversations():
+    fallback = [
+        CallbackQueryHandler(ha.cancel_conversation, pattern="^cancel_action$"),
+        CallbackQueryHandler(ha.back_to_admin_panel, pattern="^admin_panel$"),
+    ]
+
+    conv_add_hw = ConversationHandler(
+        entry_points=[CallbackQueryHandler(ha.add_hw_start, pattern="^a_add_hw$")],
+        states={
+            HW_TEXT: [MessageHandler(filters.TEXT & ~filters.COMMAND, ha.add_hw_text)],
+            HW_DUE: [MessageHandler(filters.TEXT & ~filters.COMMAND, ha.add_hw_due)],
+        },
+        fallbacks=fallback,
+    )
+
+    conv_add_ann = ConversationHandler(
+        entry_points=[CallbackQueryHandler(ha.add_ann_start, pattern="^a_add_ann$")],
+        states={
+            ANN_TEXT: [MessageHandler(filters.TEXT & ~filters.COMMAND, ha.add_ann_text)],
+            ANN_CONFIRM: [CallbackQueryHandler(ha.add_ann_confirm, pattern="^ann_send_(yes|no)$")],
+        },
+        fallbacks=fallback,
+    )
+
+    conv_set_ph = ConversationHandler(
+        entry_points=[CallbackQueryHandler(ha.set_ph_start, pattern="^a_set_ph$")],
+        states={
+            PH_DATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, ha.set_ph_date)],
+        },
+        fallbacks=fallback,
+    )
+
+    conv_add_admin = ConversationHandler(
+        entry_points=[CallbackQueryHandler(ha.add_admin_start, pattern="^a_add_admin$")],
+        states={
+            ADMIN_ID: [MessageHandler(filters.TEXT & ~filters.COMMAND, ha.add_admin_id)],
+            ADMIN_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, ha.add_admin_name)],
+        },
+        fallbacks=fallback,
+    )
+
+    conv_sched_upload = ConversationHandler(
+        entry_points=[CallbackQueryHandler(ha.sched_upload_start, pattern="^sched_upload$")],
+        states={
+            SCHED_UPLOAD_TEXT: [MessageHandler(filters.TEXT & ~filters.COMMAND, ha.sched_upload_text)],
+        },
+        fallbacks=fallback,
+    )
+
+    conv_sched_field = ConversationHandler(
+        entry_points=[
+            CallbackQueryHandler(ha.sched_field_chosen, pattern="^field_"),
+            CallbackQueryHandler(ha.sched_new_pair, pattern="^newpair_"),
+        ],
+        states={
+            SCHED_FIELD_VALUE: [MessageHandler(filters.TEXT & ~filters.COMMAND, ha.sched_field_value)],
+        },
+        fallbacks=fallback,
+    )
+
+    return [
+        conv_add_hw, conv_add_ann, conv_set_ph, conv_add_admin, conv_sched_upload, conv_sched_field,
+    ]
+
 
 def main():
-    app = Application.builder().token(BOT_TOKEN).build()
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("myid", myid))
-    print("✅ Бот запущен с прямым подключением к PostgreSQL!")
-    sys.stdout.flush()
-    app.run_polling(drop_pending_updates=True)
+    try:
+        asyncio.get_event_loop()
+    except RuntimeError:
+        asyncio.set_event_loop(asyncio.new_event_loop())
+
+    db.init_default_schedule()
+
+    application = Application.builder().token(BOT_TOKEN).build()
+    application.add_error_handler(error_handler)
+
+    # Команды
+    application.add_handler(CommandHandler("start", hu.start))
+    application.add_handler(CommandHandler("myid", hu.my_id))
+
+    # Многошаговые диалоги (регистрируются ДО общих callback-хендлеров)
+    for conv in build_conversations():
+        application.add_handler(conv)
+
+    # Главное меню / пользовательские разделы
+    application.add_handler(CallbackQueryHandler(hu.main_menu_callback, pattern="^main_menu$"))
+    application.add_handler(CallbackQueryHandler(hu.show_schedule, pattern="^menu_zam$"))
+    application.add_handler(CallbackQueryHandler(hu.show_hw, pattern="^menu_hw$"))
+    application.add_handler(CallbackQueryHandler(hu.show_announcements, pattern="^menu_ann$"))
+    application.add_handler(CallbackQueryHandler(hu.show_bells, pattern="^menu_bells$"))
+    application.add_handler(CallbackQueryHandler(hu.show_info, pattern="^menu_info$"))
+
+    # Reply-кнопка «Меню»
+    application.add_handler(MessageHandler(
+        filters.Regex("^📋 Меню$") & ~filters.COMMAND, hu.handle_menu_reply_button
+    ))
+
+    # Админ-панель — вход и кнопки без диалогов
+    application.add_handler(CallbackQueryHandler(ha.admin_panel_entry, pattern="^admin_panel$"))
+    application.add_handler(CallbackQueryHandler(ha.del_hw_list, pattern="^a_del_hw$"))
+    application.add_handler(CallbackQueryHandler(ha.del_hw_pick, pattern="^delhw_\\d+$"))
+    application.add_handler(CallbackQueryHandler(ha.del_hw_confirm, pattern="^confirm_delhw_\\d+$"))
+
+    application.add_handler(CallbackQueryHandler(ha.del_ann_list, pattern="^a_del_ann$"))
+    application.add_handler(CallbackQueryHandler(ha.del_ann_pick, pattern="^delann_\\d+$"))
+    application.add_handler(CallbackQueryHandler(ha.del_ann_confirm, pattern="^confirm_delann_\\d+$"))
+
+    application.add_handler(CallbackQueryHandler(ha.unset_ph_list, pattern="^a_unset_ph$"))
+    application.add_handler(CallbackQueryHandler(ha.unset_ph_confirm, pattern="^unsetph_\\d+$"))
+
+    application.add_handler(CallbackQueryHandler(ha.del_admin_list, pattern="^a_del_admin$"))
+    application.add_handler(CallbackQueryHandler(ha.del_admin_pick, pattern="^deladmin_\\d+$"))
+    application.add_handler(CallbackQueryHandler(ha.del_admin_confirm, pattern="^confirm_deladmin_\\d+$"))
+
+    application.add_handler(CallbackQueryHandler(ha.edit_schedule_menu, pattern="^a_edit_sched$"))
+    application.add_handler(CallbackQueryHandler(ha.sched_by_day_start, pattern="^sched_by_day$"))
+    application.add_handler(CallbackQueryHandler(ha.sched_day_chosen, pattern="^schedday_\\d+$"))
+    application.add_handler(CallbackQueryHandler(ha.sched_delete_all_day, pattern="^delallday_\\d+$"))
+    application.add_handler(CallbackQueryHandler(ha.sched_week_type_chosen, pattern="^weektype_"))
+    application.add_handler(CallbackQueryHandler(ha.sched_pair_chosen, pattern="^editpair_"))
+    application.add_handler(CallbackQueryHandler(ha.sched_delete_pair, pattern="^delpair_"))
+    application.add_handler(CallbackQueryHandler(ha.sched_upload_confirm, pattern="^confirm_schedupload_0$"))
+
+    # Общие отмены/подтверждения, которые не попали в конкретный ConversationHandler
+    application.add_handler(CallbackQueryHandler(ha.cancel_conversation, pattern="^cancel_action$"))
+    application.add_handler(CallbackQueryHandler(ha.back_to_admin_panel, pattern="^cancel_delhw$"))
+    application.add_handler(CallbackQueryHandler(ha.back_to_admin_panel, pattern="^cancel_delann$"))
+    application.add_handler(CallbackQueryHandler(ha.back_to_admin_panel, pattern="^cancel_deladmin$"))
+    application.add_handler(CallbackQueryHandler(ha.back_to_admin_panel, pattern="^cancel_schedupload$"))
+
+    logger.info("Бот запущен. Health-сервер на порту %s", os.environ.get("PORT", 8000))
+    application.run_polling(drop_pending_updates=True)
+
 
 if __name__ == "__main__":
     main()
