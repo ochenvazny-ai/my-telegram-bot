@@ -93,7 +93,7 @@ def build_conversations():
     conv_sched_upload = ConversationHandler(
         entry_points=[CallbackQueryHandler(ha.sched_upload_start, pattern="^sched_upload$")],
         states={
-            SCHED_UPLOAD_TEXT: [MessageHandler(filters.TEXT & ~filters.COMMAND, ha.sched_upload_text)],
+            SCHED_UPLOAD_TEXT: [MessageHandler(filters.Document.ALL, ha.sched_upload_document)],
         },
         fallbacks=fallback,
     )
@@ -138,8 +138,14 @@ def main():
     application.add_handler(CallbackQueryHandler(hu.show_schedule, pattern="^menu_zam$"))
     application.add_handler(CallbackQueryHandler(hu.show_hw, pattern="^menu_hw$"))
     application.add_handler(CallbackQueryHandler(hu.show_announcements, pattern="^menu_ann$"))
-    application.add_handler(CallbackQueryHandler(hu.show_bells, pattern="^menu_bells$"))
     application.add_handler(CallbackQueryHandler(hu.show_info, pattern="^menu_info$"))
+
+    # Инфо -> подменю (звонки / расписание пар с картинками)
+    application.add_handler(CallbackQueryHandler(hu.show_bells_menu, pattern="^info_bells$"))
+    application.add_handler(CallbackQueryHandler(hu.show_bells_regular, pattern="^bells_regular$"))
+    application.add_handler(CallbackQueryHandler(hu.show_bells_preholiday, pattern="^bells_preholiday$"))
+    application.add_handler(CallbackQueryHandler(hu.show_sched_img_menu, pattern="^info_sched_img$"))
+    application.add_handler(CallbackQueryHandler(hu.send_schedule_image, pattern="^schedimg_(num|den|cmp)$"))
 
     # Reply-кнопка «Меню»
     application.add_handler(MessageHandler(
@@ -164,6 +170,7 @@ def main():
     application.add_handler(CallbackQueryHandler(ha.del_admin_confirm, pattern="^confirm_deladmin_\\d+$"))
 
     application.add_handler(CallbackQueryHandler(ha.edit_schedule_menu, pattern="^a_edit_sched$"))
+    application.add_handler(CallbackQueryHandler(ha.del_all_day_menu, pattern="^a_del_all_day$"))
     application.add_handler(CallbackQueryHandler(ha.sched_by_day_start, pattern="^sched_by_day$"))
     application.add_handler(CallbackQueryHandler(ha.sched_day_chosen, pattern="^schedday_\\d+$"))
     application.add_handler(CallbackQueryHandler(ha.sched_delete_all_day, pattern="^delallday_\\d+$"))
