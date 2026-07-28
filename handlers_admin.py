@@ -1,4 +1,5 @@
 import re
+import io
 import asyncio
 import logging
 from telegram import Update
@@ -387,58 +388,90 @@ async def sched_upload_start(update: Update, context: ContextTypes.DEFAULT_TYPE)
     if not await _require_admin(update):
         return ConversationHandler.END
     await query.edit_message_text(
-        "Пришлите расписание текстом в формате:\n\n"
-        "Числитель\n1) Понедельник\n1 | Предмет | Преподаватель | Кабинет\n2 | ...\n2) Вторник\n...\n\n"
-        "Можно указать оба типа недели подряд (Числитель, затем Знаменатель).",
+        "📤 Пришлите файл .xlsx со столбцами (в этом порядке, с заголовком в первой строке):\n\n"
+        "Тип недели | День | Номер пары | Предмет | Преподаватель | Кабинет\n\n"
+        "Тип недели: «Числитель» или «Знаменатель».\n"
+        "День: понедельник…суббота.\n"
+        "Пример строки: Числитель | Понедельник | 1 | Матанализ | Иванов И.И. | 302",
         reply_markup=kb.cancel_button(),
     )
     return SCHED_UPLOAD_TEXT
 
 
-def _parse_schedule_text(text: str):
-    """Парсит текст в {(week_type, day_index): [entries]}. day_index 0=пн..5=сб."""
+def _parse_schedule_xlsx(file_bytes: bytes):
+    """Парсит .xlsx в {(week_type, day_index): [entries]}. Возвращает (result, errors)."""
+    import openpyxl
+    wb = openpyxl.load_workbook(io.BytesIO(file_bytes), data_only=True)
+    ws = wb.active
     result = {}
-    current_week_type = None
-    current_day = None
-    day_pattern = re.compile(r'^\d+\)\s*(.+)$')
-    pair_pattern = re.compile(r'^(\d+)\s*\|\s*([^|]+)\|\s*([^|]*)\|\s*(.+)$')
-    for raw_line in text.splitlines():
-        line = raw_line.strip()
-        if not line:
+    errors = []
+    for row_idx, row in enumerate(ws.iter_rows(min_row=2, values_only=True), start=2):
+        if row is None or all(c is None for c in row):
             continue
-        if line in ("Числитель", "Знаменатель"):
-            current_week_type = line
+        if len(row) < 6:
+            errors.append(f"Строка {row_idx}: недостаточно колонок")
             continue
-        day_m = day_pattern.match(line)
-        if day_m:
-            day_name = day_m.group(1).strip().lower()
-            if day_name in WEEKDAYS_RU:
-                current_day = WEEKDAYS_RU.index(day_name)
-                result.setdefault((current_week_type, current_day), [])
+        week_type, day_name, pair_num, subject, teacher, room = row[:6]
+        if not week_type or not day_name or pair_num is None or not subject:
+            errors.append(f"Строка {row_idx}: пропущены обязательные поля")
             continue
-        pair_m = pair_pattern.match(line)
-        if pair_m and current_week_type is not None and current_day is not None:
-            pair_num, subject, teacher, room = pair_m.groups()
-            result[(current_week_type, current_day)].append({
-                "pair_number": int(pair_num), "subject": subject.strip(),
-                "teacher": teacher.strip(), "room": room.strip(),
-            })
-    return result
+        week_type = str(week_type).strip()
+        if week_type not in ("Числитель", "Знаменатель"):
+            errors.append(f"Строка {row_idx}: неверный тип недели '{week_type}'")
+            continue
+        day_name_norm = str(day_name).strip().lower()
+        if day_name_norm not in WEEKDAYS_RU:
+            errors.append(f"Строка {row_idx}: неизвестный день '{day_name}'")
+            continue
+        day_idx = WEEKDAYS_RU.index(day_name_norm)
+        try:
+            pair_num = int(pair_num)
+        except (TypeError, ValueError):
+            errors.append(f"Строка {row_idx}: номер пары не число")
+            continue
+        result.setdefault((week_type, day_idx), []).append({
+            "pair_number": pair_num,
+            "subject": str(subject).strip(),
+            "teacher": str(teacher).strip() if teacher else "",
+            "room": str(room).strip() if room else "",
+        })
+    return result, errors
 
 
-async def sched_upload_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text
-    parsed = _parse_schedule_text(text)
-    if not parsed:
+async def sched_upload_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    document = update.message.document
+    if not document or not document.file_name.lower().endswith(".xlsx"):
         await update.message.reply_text(
-            "❌ Не удалось распознать формат. Проверьте пример и попробуйте снова:",
+            "❌ Нужен файл в формате .xlsx. Пришлите файл ещё раз:", reply_markup=kb.cancel_button()
+        )
+        return SCHED_UPLOAD_TEXT
+
+    tg_file = await document.get_file()
+    file_bytes = bytes(await tg_file.download_as_bytearray())
+
+    try:
+        parsed, errors = await asyncio.to_thread(_parse_schedule_xlsx, file_bytes)
+    except Exception:
+        logger.exception("Ошибка парсинга xlsx")
+        await update.message.reply_text(
+            "❌ Не удалось прочитать файл. Убедитесь, что это корректный .xlsx, и попробуйте снова:",
             reply_markup=kb.cancel_button(),
         )
+        return SCHED_UPLOAD_TEXT
+
+    if not parsed:
+        msg = "❌ Не удалось распознать ни одной строки."
+        if errors:
+            msg += "\n\nОшибки:\n" + "\n".join(errors[:10])
+        await update.message.reply_text(msg, reply_markup=kb.cancel_button())
         return SCHED_UPLOAD_TEXT
 
     preview_lines = ["Найдено:\n"]
     for (week_type, day_idx), entries in parsed.items():
         preview_lines.append(f"{week_type}, {WEEKDAYS_RU[day_idx]}: {len(entries)} пар")
+    if errors:
+        preview_lines.append(f"\n⚠️ Пропущено строк с ошибками: {len(errors)}")
+        preview_lines.extend(errors[:5])
     context.user_data['pending_schedule'] = parsed
     preview_lines.append("\n⚠️ Это ЗАМЕНИТ текущее расписание для указанных дней. Подтвердить?")
     await update.message.reply_text(
@@ -458,6 +491,17 @@ async def sched_upload_confirm(update: Update, context: ContextTypes.DEFAULT_TYP
     for (week_type, day_idx), entries in parsed.items():
         await asyncio.to_thread(db.replace_day_schedule, week_type, day_idx, entries)
     await query.edit_message_text("✅ Расписание обновлено.", reply_markup=kb.admin_panel_kb())
+
+
+async def del_all_day_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    if not await _require_admin(update):
+        return
+    await query.edit_message_text(
+        "Выберите день, для которого удалить ВСЕ пары (оба типа недели):",
+        reply_markup=kb.delete_all_day_kb(),
+    )
 
 
 async def sched_by_day_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
