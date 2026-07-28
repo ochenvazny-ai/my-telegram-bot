@@ -7,12 +7,36 @@ def main_menu_kb(is_admin_user: bool):
         [InlineKeyboardButton("📅 Замены", callback_data="menu_zam")],
         [InlineKeyboardButton("📚 Домашка", callback_data="menu_hw")],
         [InlineKeyboardButton("📢 Объявления", callback_data="menu_ann")],
-        [InlineKeyboardButton("📞 Расписание звонков", callback_data="menu_bells")],
         [InlineKeyboardButton("ℹ️ Инфо", callback_data="menu_info")],
     ]
     if is_admin_user:
         kb.append([InlineKeyboardButton("👑 Админка", callback_data="admin_panel")])
     return InlineKeyboardMarkup(kb)
+
+
+def info_menu_kb():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("📞 Расписание звонков", callback_data="info_bells")],
+        [InlineKeyboardButton("📚 Расписание пар", callback_data="info_sched_img")],
+        [InlineKeyboardButton("🔙 Назад", callback_data="main_menu")],
+    ])
+
+
+def bells_choice_kb():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("Обычные дни", callback_data="bells_regular")],
+        [InlineKeyboardButton("Предпраздничные дни", callback_data="bells_preholiday")],
+        [InlineKeyboardButton("🔙 Назад", callback_data="menu_info")],
+    ])
+
+
+def schedule_img_choice_kb():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("Числитель", callback_data="schedimg_num")],
+        [InlineKeyboardButton("Знаменатель", callback_data="schedimg_den")],
+        [InlineKeyboardButton("Оба (Сравнение)", callback_data="schedimg_cmp")],
+        [InlineKeyboardButton("🔙 Назад", callback_data="menu_info")],
+    ])
 
 
 def reply_menu_button():
@@ -108,10 +132,18 @@ def weekday_choice_kb():
 
 def schedule_edit_menu_kb():
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("📥 Загрузить новое расписание", callback_data="sched_upload")],
+        [InlineKeyboardButton("📤 Загрузить из Excel", callback_data="sched_upload")],
         [InlineKeyboardButton("📝 Редактировать по дням", callback_data="sched_by_day")],
+        [InlineKeyboardButton("🗑 Удалить все пары на день", callback_data="a_del_all_day")],
         [InlineKeyboardButton("❌ Отмена", callback_data="admin_panel")],
     ])
+
+
+def delete_all_day_kb():
+    buttons = [[InlineKeyboardButton(WEEKDAYS_RU[i].capitalize(), callback_data=f"delallday_{i}")]
+               for i in range(6)]
+    buttons.append([InlineKeyboardButton("🔙 Назад", callback_data="admin_panel")])
+    return InlineKeyboardMarkup(buttons)
 
 
 def week_type_kb(day_index: int):
