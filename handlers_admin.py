@@ -45,7 +45,7 @@ async def add_hw_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     if not await _require_admin(update):
         return ConversationHandler.END
-    await query.edit_message_text(" Введите текст задания:", reply_markup=kb.cancel_button())
+    await query.edit_message_text("📝 Введите текст задания:", reply_markup=kb.cancel_button())
     return HW_TEXT
 
 async def add_hw_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -113,12 +113,12 @@ async def del_hw_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ok = await asyncio.to_thread(db.delete_task_db, task_id)
     tasks = await asyncio.to_thread(db.get_all_tasks_db)
     if not tasks:
-        await query.edit_message_text(" Нет текущих домашних заданий.", reply_markup=kb.admin_panel_kb())
+        await query.edit_message_text("📭 Нет текущих домашних заданий.", reply_markup=kb.admin_panel_kb())
     else:
         lines = ["Выберите задание для удаления:\n"]
         for idx, (_id, task, due_date, _) in enumerate(tasks, start=1):
             due_str = f" ({due_date})" if due_date else ""
-            lines.append(f"{idx}️ {task}{due_str}")
+            lines.append(f"{idx}️⃣ {task}{due_str}")
         await query.edit_message_text("\n".join(lines), reply_markup=kb.delete_hw_kb(tasks))
 
 # ============ СОЗДАНИЕ ОБЪЯВЛЕНИЯ ============
@@ -145,7 +145,7 @@ async def _broadcast(bot, text: str) -> tuple[int, int]:
     sent, failed = 0, 0
     for uid in user_ids:
         try:
-            await bot.send_message(chat_id=uid, text=f" {text}")
+            await bot.send_message(chat_id=uid, text=f"📢 {text}")
             sent += 1
         except Exception:
             failed += 1
@@ -162,7 +162,7 @@ async def add_ann_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if query.data == "ann_send_yes":
         await query.edit_message_text("⏳ Рассылаю объявление...")
         sent, failed = await _broadcast(context.bot, text)
-        await query.message.reply_text(f"✅ Отправлено {sent},  не доставлено {failed}")
+        await query.message.reply_text(f"✅ Отправлено {sent}, ❌ не доставлено {failed}")
     else:
         await query.edit_message_text("✅ Объявление сохранено. Рассылка не выполнялась.")
     context.user_data.clear()
@@ -181,7 +181,7 @@ async def del_ann_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     lines = ["Выберите объявление для удаления:\n"]
     for idx, (_id, text, created_at) in enumerate(anns, start=1):
-        lines.append(f"{idx}️ {created_at.split(' ')[0]}: {text}")
+        lines.append(f"{idx}️⃣ {created_at.split(' ')[0]}: {text}")
     await query.edit_message_text("\n".join(lines), reply_markup=kb.delete_ann_kb(anns))
 
 async def del_ann_pick(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -224,7 +224,7 @@ async def set_ph_date(update: Update, context: ContextTypes.DEFAULT_TYPE):
     m = re.match(r'^(\d{2})\.(\d{2})$', text)
     if not m:
         await update.message.reply_text(
-            "❌ Неверный формат. Введите дату как ДД.ММ (например, 09.05):", reply_markup=kb.cancel_button()
+            " Неверный формат. Введите дату как ДД.ММ (например, 09.05):", reply_markup=kb.cancel_button()
         )
         return PH_DATE
     day, month = m.group(1), m.group(2)
@@ -469,7 +469,7 @@ async def sched_upload_document(update: Update, context: ContextTypes.DEFAULT_TY
         preview_lines.extend(errors[:5])
     
     context.user_data['pending_schedule'] = parsed
-    preview_lines.append("\n️ Это ЗАМЕНИТ текущее расписание для указанных дней. Подтвердить?")
+    preview_lines.append("\n⚠️ Это ЗАМЕНИТ текущее расписание для указанных дней. Подтвердить?")
     await update.message.reply_text(
         "\n".join(preview_lines),
         reply_markup=kb.confirm_kb("schedupload", "0"),
@@ -615,7 +615,7 @@ async def sched_field_value(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             await update.message.reply_text(f"✅ Пара {pair_num} добавлена.")
             context.user_data.pop('sched_edit', None)
-            await update.message.reply_text("👑 Админ-панель", reply_markup=kb.admin_panel_kb())
+            await update.message.reply_text(" Админ-панель", reply_markup=kb.admin_panel_kb())
             return ConversationHandler.END
     
     # Обычное редактирование одного поля существующей пары
@@ -636,5 +636,5 @@ async def cancel_conversation(update: Update, context: ContextTypes.DEFAULT_TYPE
     query = update.callback_query
     if query:
         await query.answer()
-        await query.edit_message_text("❌ Отменено.\n\n Админ-панель", reply_markup=kb.admin_panel_kb())
+        await query.edit_message_text(" Отменено.\n\n👑 Админ-панель", reply_markup=kb.admin_panel_kb())
     return ConversationHandler.END
