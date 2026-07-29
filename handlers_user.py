@@ -17,9 +17,9 @@ INFO_TEXT = (
     "• Управляй ботом с помощью кнопок под сообщениями.\n\n"
     "📅 Замены — замены на день, указанный на сайте колледжа.\n"
     "📚 Домашка — список актуальных домашних заданий.\n"
-    "📢 Объявления — активные объявления от администрации.\n"
+    " Объявления — активные объявления от администрации.\n"
     "ℹ️ Инфо — расписание звонков и расписание пар.\n\n"
-    "Успехов в учёбе! 📚"
+    "Успехов в учёбе! "
 )
 
 BELLS_REGULAR_TEXT = (
@@ -147,7 +147,7 @@ async def show_sched_img_menu(update: Update, context: ContextTypes.DEFAULT_TYPE
 async def send_schedule_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    choice = query.data  # schedimg_num / schedimg_den / schedimg_cmp
+    choice = query.data
     
     await query.edit_message_text("⏳ Формирую изображение...")
     
@@ -159,13 +159,11 @@ async def send_schedule_image(update: Update, context: ContextTypes.DEFAULT_TYPE
         else:
             img_bytes = await asyncio.to_thread(sched_img.render_comparison_image)
         
-        # Отправляем фото с кнопкой «Назад»
         await context.bot.send_photo(
             chat_id=update.effective_chat.id,
             photo=io.BytesIO(img_bytes),
             reply_markup=kb.back_button("info_sched_img"),
         )
-        # Удаляем сообщение «⏳ Формирую изображение...», чтобы не было дубля меню
         await query.delete_message()
     except Exception:
         logger.exception("Не удалось сформировать изображение расписания")
