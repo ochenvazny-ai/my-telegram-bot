@@ -561,4 +561,80 @@ async def sched_new_pair(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return SCHED_FIELD_VALUE
 
 async def sched_delete_pair(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query =
+    query = update.callback_query
+    await query.answer()
+    _, week_type, day_idx, pair_num = query.data.split("_")
+    await asyncio.to_thread(db.delete_pair, week_type, int(day_idx), int(pair_num))
+    await query.answer("Пара удалена", show_alert=True)
+    pairs = await asyncio.to_thread(db.get_base_schedule, week_type, int(day_idx))
+    lines = [f"{week_type}, {WEEKDAYS_RU[int(day_idx)]}:\n"]
+    for num, info in sorted(pairs.items()):
+        lines.append(f"{num}. {info['subject']} ({info['teacher']}) — {info['room']}")
+    await query.edit_message_text("\n".join(lines) or "Пар пока нет.",
+                                  reply_markup=kb.pair_choice_kb(pairs, week_type, int(day_idx)))
+
+async def sched_field_chosen(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    _, field, week_type, day_idx, pair_num = query.data.split("_")
+    context.user_data['sched_edit'] = {
+        "week_type": week_type, "day_idx": int(day_idx), "pair_num": int(pair_num), "field": field,
+    }
+    field_names = {"subject": "предмет", "teacher": "преподавателя", "room": "аудиторию"}
+    await query.edit_message_text(f"Введите новое значение ({field_names[field]}):", reply_markup=kb.cancel_button())
+    return SCHED_FIELD_VALUE
+
+async def sched_field_value(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    value = update.message.text.strip()
+    edit = context.user_data.get('sched_edit', {})
+    week_type, day_idx, pair_num = edit.get('week_type'), edit.get('day_idx'), edit.get('pair_num')
+    
+    # Сценарий "новая пара": последовательно спрашиваем subject -> teacher -> room
+    if edit.get('field') in ('subject', 'teacher', 'room') and 'is_new' not in edit:
+        pairs_existing = await asyncio.to_thread(db.get_base_schedule, week_type, day_idx)
+        is_new_pair = pair_num not in pairs_existing
+        if is_new_pair and edit.get('subject', None) == "":
+            edit['subject'] = value
+            edit['field'] = 'teacher'
+            edit['is_new'] = True
+            context.user_data['sched_edit'] = edit
+            await update.message.reply_text("Теперь введите преподавателя:", reply_markup=kb.cancel_button())
+            return SCHED_FIELD_VALUE
+    
+    if edit.get('is_new'):
+        if edit['field'] == 'teacher':
+            edit['teacher'] = value
+            edit['field'] = 'room'
+            context.user_data['sched_edit'] = edit
+            await update.message.reply_text("Теперь введите аудиторию:", reply_markup=kb.cancel_button())
+            return SCHED_FIELD_VALUE
+        elif edit['field'] == 'room':
+            edit['room'] = value
+            await asyncio.to_thread(
+                db.upsert_pair, week_type, day_idx, pair_num, edit['subject'], edit['teacher'], edit['room']
+            )
+            await update.message.reply_text(f"✅ Пара {pair_num} добавлена.")
+            context.user_data.pop('sched_edit', None)
+            await update.message.reply_text("👑 Админ-панель", reply_markup=kb.admin_panel_kb())
+            return ConversationHandler.END
+    
+    # Обычное редактирование одного поля существующей пары
+    pairs = await asyncio.to_thread(db.get_base_schedule, week_type, day_idx)
+    current = pairs.get(pair_num, {"subject": "", "teacher": "", "room": ""})
+    current[edit['field']] = value
+    await asyncio.to_thread(
+        db.upsert_pair, week_type, day_idx, pair_num, current['subject'], current['teacher'], current['room']
+    )
+    await update.message.reply_text("✅ Обновлено.")
+    context.user_data.pop('sched_edit', None)
+    await update.message.reply_text("👑 Админ-панель", reply_markup=kb.admin_panel_kb())
+    return ConversationHandler.END
+
+# ============ ОТМЕНА ============
+async def cancel_conversation(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data.clear()
+    query = update.callback_query
+    if query:
+        await query.answer()
+        await query.edit_message_text("❌ Отменено.\n\n Админ-панель", reply_markup=kb.admin_panel_kb())
+    return ConversationHandler.END
