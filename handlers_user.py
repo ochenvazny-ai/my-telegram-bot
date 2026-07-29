@@ -13,13 +13,13 @@ logger = logging.getLogger(__name__)
 
 INFO_TEXT = (
     "🤖 Бот для группы ИБ1-31\n\n"
-    "📌 Как пользоваться:\n"
+    " Как пользоваться:\n"
     "• Управляй ботом с помощью кнопок под сообщениями.\n\n"
-    "📅 Замены — замены на день, указанный на сайте колледжа.\n"
+    " Замены — замены на день, указанный на сайте колледжа.\n"
     "📚 Домашка — список актуальных домашних заданий.\n"
-    " Объявления — активные объявления от администрации.\n"
+    "📢 Объявления — активные объявления от администрации.\n"
     "ℹ️ Инфо — расписание звонков и расписание пар.\n\n"
-    "Успехов в учёбе! "
+    "Успехов в учёбе! 📚"
 )
 
 BELLS_REGULAR_TEXT = (
@@ -61,7 +61,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await asyncio.to_thread(db.upsert_user, user.id, user.username, user.first_name)
     admin = await asyncio.to_thread(db.is_admin, user.id)
     await update.message.reply_text(
-        "🤖 Бот для группы ИБ1-31\n\nГлавное меню:",
+        " Бот для группы ИБ1-31\n\nГлавное меню:",
         reply_markup=kb.main_menu_kb(admin),
     )
     await update.message.reply_text("Меню:", reply_markup=kb.reply_menu_button())
@@ -71,7 +71,7 @@ async def my_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def handle_menu_reply_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Ловит нажатие Reply-кнопки «📋 Меню» вне активных диалогов."""
-    if update.message.text == "📋 Меню":
+    if update.message.text == " Меню":
         await start(update, context)
 
 async def main_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -94,7 +94,7 @@ async def show_hw(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.edit_message_text("Загружаю список...")
     tasks = await asyncio.to_thread(db.get_all_tasks_db)
     if not tasks:
-        text = "📭 Нет текущих домашних заданий."
+        text = " Нет текущих домашних заданий."
     else:
         lines = ["📚 Текущие домашние задания:\n"]
         for idx, (_, task, due_date, _) in enumerate(tasks, start=1):
@@ -111,7 +111,7 @@ async def show_announcements(update: Update, context: ContextTypes.DEFAULT_TYPE)
     if not anns:
         text = "📭 Активных объявлений нет."
     else:
-        lines = ["📢 Объявления:\n"]
+        lines = [" Объявления:\n"]
         for idx, (_, ann_text, created_at) in enumerate(anns, start=1):
             date_part = created_at.split(" ")[0] if created_at else ""
             lines.append(f"{idx}️⃣ {date_part}: {ann_text}")
@@ -142,7 +142,7 @@ async def show_bells_preholiday(update: Update, context: ContextTypes.DEFAULT_TY
 async def show_sched_img_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    await query.edit_message_text(" Расписание пар. Выберите вариант:", reply_markup=kb.schedule_img_choice_kb())
+    await query.edit_message_text("📚 Расписание пар. Выберите вариант:", reply_markup=kb.schedule_img_choice_kb())
 
 async def send_schedule_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
