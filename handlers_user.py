@@ -4,7 +4,6 @@ import io
 from datetime import datetime
 from telegram import Update
 from telegram.ext import ContextTypes
-
 import database as db
 import keyboards as kb
 import schedule_service as sched
@@ -13,7 +12,7 @@ import schedule_image as sched_img
 logger = logging.getLogger(__name__)
 
 INFO_TEXT = (
-    "🤖 Бот для группы ИБ1-31\n\n"
+    " Бот для группы ИБ1-31\n\n"
     "📌 Как пользоваться:\n"
     "• Управляй ботом с помощью кнопок под сообщениями.\n\n"
     "📅 Замены — замены на день, указанный на сайте колледжа.\n"
@@ -57,7 +56,6 @@ BELLS_PRE_HOLIDAY_TEXT = (
     "Перемены между остальными парами – по 10 минут."
 )
 
-
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     await asyncio.to_thread(db.upsert_user, user.id, user.username, user.first_name)
@@ -68,16 +66,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     await update.message.reply_text("Меню:", reply_markup=kb.reply_menu_button())
 
-
 async def my_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(f"🆔 Ваш ID: `{update.effective_user.id}`", parse_mode='Markdown')
-
+    await update.message.reply_text(f" Ваш ID: `{update.effective_user.id}`", parse_mode='Markdown')
 
 async def handle_menu_reply_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Ловит нажатие Reply-кнопки «📋 Меню» вне активных диалогов."""
     if update.message.text == "📋 Меню":
         await start(update, context)
-
 
 async def main_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -86,14 +81,12 @@ async def main_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
     admin = await asyncio.to_thread(db.is_admin, user_id)
     await query.edit_message_text("Главное меню:", reply_markup=kb.main_menu_kb(admin))
 
-
 async def show_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     await query.edit_message_text("Загружаю расписание...")
     text, ok = await sched.get_schedule_for_display()
     await query.edit_message_text(text, parse_mode='HTML', reply_markup=kb.back_button())
-
 
 async def show_hw(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -106,10 +99,9 @@ async def show_hw(update: Update, context: ContextTypes.DEFAULT_TYPE):
         lines = ["📚 Текущие домашние задания:\n"]
         for idx, (_, task, due_date, _) in enumerate(tasks, start=1):
             due_str = f" (срок: {due_date})" if due_date else ""
-            lines.append(f"{idx}️⃣ {task}{due_str}")
+            lines.append(f"{idx}️ {task}{due_str}")
         text = "\n".join(lines)
     await query.edit_message_text(text, reply_markup=kb.back_button())
-
 
 async def show_announcements(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -117,7 +109,7 @@ async def show_announcements(update: Update, context: ContextTypes.DEFAULT_TYPE)
     await query.edit_message_text("Загружаю объявления...")
     anns = await asyncio.to_thread(db.get_active_announcements)
     if not anns:
-        text = "📭 Активных объявлений нет."
+        text = " Активных объявлений нет."
     else:
         lines = ["📢 Объявления:\n"]
         for idx, (_, ann_text, created_at) in enumerate(anns, start=1):
@@ -126,43 +118,39 @@ async def show_announcements(update: Update, context: ContextTypes.DEFAULT_TYPE)
         text = "\n".join(lines)
     await query.edit_message_text(text, reply_markup=kb.back_button())
 
-
 async def show_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Раздел «Инфо» — теперь это подменю, а не статичный текст."""
     query = update.callback_query
     await query.answer()
     await query.edit_message_text("ℹ️ Инфо. Выберите раздел:", reply_markup=kb.info_menu_kb())
 
-
 async def show_bells_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     await query.edit_message_text("📞 Расписание звонков. Выберите тип дня:", reply_markup=kb.bells_choice_kb())
-
 
 async def show_bells_regular(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     await query.edit_message_text(BELLS_REGULAR_TEXT, reply_markup=kb.back_button("info_bells"))
 
-
 async def show_bells_preholiday(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     await query.edit_message_text(BELLS_PRE_HOLIDAY_TEXT, reply_markup=kb.back_button("info_bells"))
-
 
 async def show_sched_img_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     await query.edit_message_text("📚 Расписание пар. Выберите вариант:", reply_markup=kb.schedule_img_choice_kb())
 
-
 async def send_schedule_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     choice = query.data  # schedimg_num / schedimg_den / schedimg_cmp
+    
     await query.edit_message_text("⏳ Формирую изображение...")
+    
     try:
         if choice == "schedimg_num":
             img_bytes = await asyncio.to_thread(sched_img.render_schedule_image, "Числитель")
@@ -170,12 +158,17 @@ async def send_schedule_image(update: Update, context: ContextTypes.DEFAULT_TYPE
             img_bytes = await asyncio.to_thread(sched_img.render_schedule_image, "Знаменатель")
         else:
             img_bytes = await asyncio.to_thread(sched_img.render_comparison_image)
+        
         await context.bot.send_photo(
             chat_id=update.effective_chat.id,
             photo=io.BytesIO(img_bytes),
             reply_markup=kb.back_button("info_sched_img"),
         )
-        await query.delete_message()
+        # Вместо удаления сообщения возвращаемся к меню выбора, чтобы кнопка «Назад» работала
+        await query.edit_message_text(
+            " Расписание пар. Выберите вариант:",
+            reply_markup=kb.schedule_img_choice_kb()
+        )
     except Exception:
         logger.exception("Не удалось сформировать изображение расписания")
         await query.edit_message_text(
