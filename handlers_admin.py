@@ -45,7 +45,7 @@ async def add_hw_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     if not await _require_admin(update):
         return ConversationHandler.END
-    await query.edit_message_text("📝 Введите текст задания:", reply_markup=kb.cancel_button())
+    await query.edit_message_text(" Введите текст задания:", reply_markup=kb.cancel_button())
     return HW_TEXT
 
 async def add_hw_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -66,10 +66,10 @@ async def add_hw_due(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text("❌ Ошибка при сохранении задания.")
     context.user_data.clear()
-    await update.message.reply_text("👑 Админ-панель", reply_markup=kb.admin_panel_kb())
+    await update.message.reply_text(" Админ-панель", reply_markup=kb.admin_panel_kb())
     return ConversationHandler.END
 
-# ============ УДАЛЕНИЕ ДЗ (без Conversation, чисто кнопки) ============
+# ============ УДАЛЕНИЕ ДЗ ============
 async def del_hw_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -166,7 +166,7 @@ async def add_ann_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await query.edit_message_text("✅ Объявление сохранено. Рассылка не выполнялась.")
     context.user_data.clear()
-    await query.message.reply_text("👑 Админ-панель", reply_markup=kb.admin_panel_kb())
+    await query.message.reply_text(" Админ-панель", reply_markup=kb.admin_panel_kb())
     return ConversationHandler.END
 
 # ============ УДАЛЕНИЕ ОБЪЯВЛЕНИЯ ============
@@ -181,7 +181,7 @@ async def del_ann_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     lines = ["Выберите объявление для удаления:\n"]
     for idx, (_id, text, created_at) in enumerate(anns, start=1):
-        lines.append(f"{idx}️ {created_at.split(' ')[0]}: {text}")
+        lines.append(f"{idx}️⃣ {created_at.split(' ')[0]}: {text}")
     await query.edit_message_text("\n".join(lines), reply_markup=kb.delete_ann_kb(anns))
 
 async def del_ann_pick(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -264,7 +264,7 @@ async def unset_ph_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         display_items = [(_id, f"{d.split('-')[1]}.{d.split('-')[0]}") for _id, d in items]
         await query.edit_message_text(
-            "🗑 Отменено. Осталось:", reply_markup=kb.pre_holiday_list_kb(display_items, "unsetph")
+            " Отменено. Осталось:", reply_markup=kb.pre_holiday_list_kb(display_items, "unsetph")
         )
 
 # ============ АДМИНЫ ============
@@ -355,20 +355,38 @@ async def sched_upload_start(update: Update, context: ContextTypes.DEFAULT_TYPE)
     if not await _require_admin(update):
         return ConversationHandler.END
     await query.edit_message_text(
-        " Пришлите файл .xlsx с расписанием в формате:\n\n"
+        "📤 Пришлите файл .xlsx с расписанием в формате:\n\n"
         "• Дни недели (Понедельник, Вторник, etc.) как заголовки строк\n"
         "• Колонки: № | Дисциплина | Преподаватель | Кабинет\n"
-        "• Номера пар: 0, 1, 2, 3\n\n"
+        "• Номера пар: '0 пара', '1 пара', '2 пара' и т.д.\n\n"
         "Пример:\n"
         "Понедельник\n"
-        "1 | Основы алгоритмизации | Вершинина Н.А. | Б302\n"
-        "2 | Русский язык | Грибанова Е.Н. | Б401",
+        "1 пара | Основы алгоритмизации | Вершинина Н.А. | Б302\n"
+        "2 пара | Русский язык | Грибанова Е.Н. | Б401",
         reply_markup=kb.cancel_button(),
     )
     return SCHED_UPLOAD_TEXT
 
+def _parse_pair_number(value):
+    """Извлекает номер пары из строки типа '1 пара' или просто числа."""
+    if value is None:
+        return None
+    value_str = str(value).strip()
+    if not value_str:
+        return None
+    # Пробуем просто int
+    try:
+        return int(value_str)
+    except ValueError:
+        pass
+    # Ищем число в начале строки (например, "1 пара" -> 1)
+    match = re.match(r'^(\d+)', value_str)
+    if match:
+        return int(match.group(1))
+    return None
+
 def _parse_schedule_xlsx(file_bytes: bytes):
-    """Парсит .xlsx в формате: Дни недели как заголовки строк, 4 колонки (№, Дисциплина, Преподаватель, Кабинет)"""
+    """Парсит .xlsx в формате: Дни недели как заголовки строк, 4 колонки"""
     import openpyxl
     wb = openpyxl.load_workbook(io.BytesIO(file_bytes), data_only=True)
     ws = wb.active
@@ -382,6 +400,7 @@ def _parse_schedule_xlsx(file_bytes: bytes):
     }
     
     current_day = None
+    current_week_type = "Числитель"
     
     for row_idx, row in enumerate(ws.iter_rows(min_row=1, values_only=True), start=1):
         if row is None or all(c is None for c in row):
@@ -389,6 +408,12 @@ def _parse_schedule_xlsx(file_bytes: bytes):
         
         first_cell = str(row[0]).strip().lower() if row[0] else ""
         
+        # Проверяем тип недели
+        if first_cell in ("числитель", "знаменатель"):
+            current_week_type = "Числитель" if first_cell == "числитель" else "Знаменатель"
+            continue
+        
+        # Проверяем день недели
         if first_cell in day_mapping:
             current_day = day_mapping[first_cell]
             continue
@@ -396,17 +421,14 @@ def _parse_schedule_xlsx(file_bytes: bytes):
         if current_day is None:
             continue
         
-        if first_cell in ("№", "номер", "номер пары"):
+        # Пропускаем заголовки
+        if first_cell in ("№", "номер", "номер пары", "шаблон расписания"):
             continue
         
-        if len(row) < 4:
-            errors.append(f"Строка {row_idx}: недостаточно колонок")
-            continue
-        
-        try:
-            pair_num = int(row[0]) if row[0] is not None else None
-        except (TypeError, ValueError):
-            errors.append(f"Строка {row_idx}: номер пары не число")
+        # Извлекаем номер пары
+        pair_num = _parse_pair_number(row[0])
+        if pair_num is None:
+            errors.append(f"Строка {row_idx}: номер пары не распознан ('{row[0]}')")
             continue
         
         subject = str(row[1]).strip() if row[1] else ""
@@ -416,9 +438,7 @@ def _parse_schedule_xlsx(file_bytes: bytes):
         if not subject:
             continue
         
-        week_type = "Числитель"
-        
-        result.setdefault((week_type, current_day), []).append({
+        result.setdefault((current_week_type, current_day), []).append({
             "pair_number": pair_num,
             "subject": subject,
             "teacher": teacher,
@@ -512,7 +532,7 @@ async def sched_delete_all_day(update: Update, context: ContextTypes.DEFAULT_TYP
     day_idx = int(query.data.split("_")[1])
     await asyncio.to_thread(db.delete_all_pairs_for_day, day_idx)
     await query.edit_message_text(
-        f" Все пары на {WEEKDAYS_RU[day_idx]} удалены (оба типа недели).",
+        f"🗑 Все пары на {WEEKDAYS_RU[day_idx]} удалены (оба типа недели).",
         reply_markup=kb.admin_panel_kb(),
     )
 
@@ -619,7 +639,7 @@ async def sched_field_value(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     await update.message.reply_text("✅ Обновлено.")
     context.user_data.pop('sched_edit', None)
-    await update.message.reply_text("👑 Админ-панель", reply_markup=kb.admin_panel_kb())
+    await update.message.reply_text(" Админ-панель", reply_markup=kb.admin_panel_kb())
     return ConversationHandler.END
 
 # ============ ОТМЕНА ============
@@ -628,5 +648,5 @@ async def cancel_conversation(update: Update, context: ContextTypes.DEFAULT_TYPE
     query = update.callback_query
     if query:
         await query.answer()
-        await query.edit_message_text("❌ Отменено.\n\n👑 Админ-панель", reply_markup=kb.admin_panel_kb())
+        await query.edit_message_text("❌ Отменено.\n\n Админ-панель", reply_markup=kb.admin_panel_kb())
     return ConversationHandler.END
