@@ -1,9 +1,13 @@
 import io
+import os
+import logging
 import textwrap
 from PIL import Image, ImageDraw, ImageFont
 
 import database as db
 from config import WEEKDAYS_RU
+
+logger = logging.getLogger(__name__)
 
 CELL_W = 220
 CELL_H = 100
@@ -18,18 +22,70 @@ COLOR_TEXT = (20, 20, 20)
 COLOR_DIFF = (230, 126, 34)  # оранжевый — для расхождений знаменателя
 
 
-def _font(size=14):
+def _find_font_path(bold: bool = False) -> str | None:
+    """Ищет .ttf-шрифт с поддержкой кириллицы.
+
+    Системные пути (/usr/share/fonts/...) на Railway/большинстве
+    контейнеров отсутствуют, поэтому в первую очередь используем шрифт,
+    который физически лежит внутри pip-пакета matplotlib — он ставится
+    через requirements.txt и не зависит от того, какие пакеты стоят в ОС.
+    """
+    filename = "DejaVuSans-Bold.ttf" if bold else "DejaVuSans.ttf"
+
+    # 1. Шрифт из пакета matplotlib (самый надёжный вариант — ставится через pip)
     try:
-        return ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", size)
+        import matplotlib
+        candidate = os.path.join(matplotlib.get_data_path(), "fonts", "ttf", filename)
+        if os.path.isfile(candidate):
+            return candidate
     except Exception:
-        return ImageFont.load_default()
+        pass
+
+    # 2. Типичные системные пути (если matplotlib недоступен, но шрифт всё же есть в ОС)
+    system_candidates = [
+        f"/usr/share/fonts/truetype/dejavu/{filename}",
+        f"/usr/share/fonts/dejavu/{filename}",
+        f"/usr/share/fonts/truetype/dejavu-sans/{filename}",
+    ]
+    for path in system_candidates:
+        if os.path.isfile(path):
+            return path
+
+    return None
+
+
+_FONT_CACHE = {}
+
+
+def _load_font(size: int, bold: bool = False):
+    cache_key = (size, bold)
+    if cache_key in _FONT_CACHE:
+        return _FONT_CACHE[cache_key]
+
+    path = _find_font_path(bold=bold)
+    if path:
+        try:
+            font = ImageFont.truetype(path, size)
+            _FONT_CACHE[cache_key] = font
+            return font
+        except Exception:
+            logger.exception("Не удалось загрузить шрифт %s", path)
+
+    logger.warning(
+        "Шрифт с поддержкой кириллицы не найден (matplotlib/системные пути) — "
+        "текст на изображении расписания будет нечитаемым. Добавьте matplotlib в requirements.txt."
+    )
+    font = ImageFont.load_default()
+    _FONT_CACHE[cache_key] = font
+    return font
+
+
+def _font(size=14):
+    return _load_font(size, bold=False)
 
 
 def _font_bold(size=15):
-    try:
-        return ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", size)
-    except Exception:
-        return ImageFont.load_default()
+    return _load_font(size, bold=True)
 
 
 def _cell_text(entry: dict | None) -> str:
