@@ -7,7 +7,7 @@ from bs4 import BeautifulSoup
 
 import database as db
 from config import (
-    SCHEDULE_SITE_URL, GROUP_NAME, WEEKDAYS_RU, MONTHS_RU, MONTHS_RU_TO_NUM, NUMBER_EMOJIS,
+    GROUP_NAME, WEEKDAYS_RU, MONTHS_RU, MONTHS_RU_TO_NUM, NUMBER_EMOJIS, get_site_url,
 )
 
 logger = logging.getLogger(__name__)
@@ -143,7 +143,8 @@ def build_final_entries(week_type: str, day_of_week: int, replacements: list[dic
     return result
 
 
-def format_schedule_message(target_date: date_cls, week_type: str, entries: list[dict], note: str = "") -> str:
+def format_schedule_message(target_date: date_cls, week_type: str, entries: list[dict], site_url: str,
+                             note: str = "", replacement_notes: list[str] | None = None) -> str:
     weekday_name = WEEKDAYS_RU[target_date.weekday()]
     text = f"✨ РАСПИСАНИЕ ЗАНЯТИЙ НА {format_date_russian(target_date)} ({week_type}) ✨\n"
     text += f"({weekday_name})\n"
@@ -161,13 +162,15 @@ def format_schedule_message(target_date: date_cls, week_type: str, entries: list
         teacher_part = f" ({e['teacher']})" if e.get("teacher") else ""
         replaced_tag = " [ЗАМЕНА]" if e.get("is_replaced") else ""
         text += f"🔹 {emoji} {e['subject']}{teacher_part}{replaced_tag} | {e.get('room', '?')}\n"
-    text += f"\n🔗 <a href='{SCHEDULE_SITE_URL}'>Проверить замены на сайте</a>"
+    text += f"\n🔗 <a href='{site_url}'>Проверить замены на сайте</a>"
+    if replacement_notes:
+        text += "\n\n📝 " + "\n📝 ".join(replacement_notes)
     return text
 
 
-async def _fetch_site_html() -> str | None:
+async def _fetch_site_html(site_url: str) -> str | None:
     try:
-        response = await asyncio.to_thread(requests.get, SCHEDULE_SITE_URL, timeout=15)
+        response = await asyncio.to_thread(requests.get, site_url, timeout=15)
         response.encoding = 'utf-8'
         if response.status_code != 200:
             return None
@@ -177,10 +180,24 @@ async def _fetch_site_html() -> str | None:
         return None
 
 
+def _pre_holiday_note(file_date: date_cls, today: date_cls) -> str | None:
+    mmdd = file_date.strftime("%m-%d")
+    if not db.is_pre_holiday_today(mmdd):
+        return None
+    if file_date == today:
+        return "Сегодня пары по часу!"
+    if file_date == today + timedelta(days=1):
+        return "Завтра пары по часу!"
+    return None
+
+
 async def get_schedule_for_display() -> tuple[str, bool]:
     """Главная функция получения расписания на «сегодня» (то, что показывает кнопка «Замены»).
     Возвращает (текст_сообщения, успех)."""
-    html_text = await _fetch_site_html()
+    shift = await asyncio.to_thread(db.get_current_shift)
+    site_url = get_site_url(shift)
+
+    html_text = await _fetch_site_html(site_url)
     if not html_text:
         return "Не удалось загрузить страницу с заменами. Попробуйте позже.", False
 
@@ -195,6 +212,9 @@ async def get_schedule_for_display() -> tuple[str, bool]:
     today = datetime.now().date()
     day_diff = (file_date - today).days
 
+    ph_note = await asyncio.to_thread(_pre_holiday_note, file_date, today)
+    repl_notes = await asyncio.to_thread(db.get_active_replacement_notes)
+
     # 1. Проверяем кэш
     cached = await asyncio.to_thread(db.get_cached_schedule, file_date)
     if cached:
@@ -202,7 +222,8 @@ async def get_schedule_for_display() -> tuple[str, bool]:
             "pair_num": row["pair_num"], "subject": row["subject"], "teacher": row.get("teacher", ""),
             "room": row.get("room", ""), "is_replaced": row.get("is_replaced", False),
         } for row in cached]
-        return format_schedule_message(file_date, week_type, entries), True
+        return format_schedule_message(file_date, week_type, entries, site_url,
+                                        note=ph_note or "", replacement_notes=repl_notes), True
 
     day_of_week = file_date.weekday()
 
@@ -211,18 +232,21 @@ async def get_schedule_for_display() -> tuple[str, bool]:
         replacements = parse_replacements_from_html(html_text)
         entries = await asyncio.to_thread(build_final_entries, week_type, day_of_week, replacements)
         await asyncio.to_thread(db.save_schedule_cache, file_date, week_type, weekday_name, entries)
-        return format_schedule_message(file_date, week_type, entries), True
+        return format_schedule_message(file_date, week_type, entries, site_url,
+                                        note=ph_note or "", replacement_notes=repl_notes), True
     elif day_diff < 0:
         # прошлая дата — замены не сохранялись, показываем базовое расписание
         base = await asyncio.to_thread(db.get_base_schedule, week_type, day_of_week)
         entries = [{"pair_num": str(p), "subject": v["subject"], "teacher": v["teacher"],
                     "room": v["room"], "is_replaced": False} for p, v in sorted(base.items())]
-        return format_schedule_message(file_date, week_type, entries,
-                                        note="Это прошедшая дата, замены на неё не сохранялись."), True
+        note = "Это прошедшая дата, замены на неё не сохранялись."
+        return format_schedule_message(file_date, week_type, entries, site_url, note=note,
+                                        replacement_notes=repl_notes), True
     else:
         # далёкое будущее — базовое расписание с пометкой
         base = await asyncio.to_thread(db.get_base_schedule, week_type, day_of_week)
         entries = [{"pair_num": str(p), "subject": v["subject"], "teacher": v["teacher"],
                     "room": v["room"], "is_replaced": False} for p, v in sorted(base.items())]
-        return format_schedule_message(file_date, week_type, entries,
-                                        note="Замены на эту дату ещё не известны."), True
+        note = "Замены на эту дату ещё не известны." + (f" {ph_note}" if ph_note else "")
+        return format_schedule_message(file_date, week_type, entries, site_url, note=note,
+                                        replacement_notes=repl_notes), True

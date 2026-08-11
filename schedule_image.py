@@ -3,150 +3,202 @@ import os
 import logging
 import textwrap
 from PIL import Image, ImageDraw, ImageFont
+
 import database as db
 from config import WEEKDAYS_RU
 
 logger = logging.getLogger(__name__)
 
-COLOR_BG = (255, 255, 255)
-COLOR_HEADER_BG = (230, 230, 230)
-COLOR_GRID = (180, 180, 180)
-COLOR_TEXT = (20, 20, 20)
-COLOR_HEADER_TEXT = (0, 0, 0)
-
-COL_NUM_W = 60
-COL_SUBJECT_W = 280
-COL_TEACHER_W = 220
-COL_ROOM_W = 120
-
-ROW_HEIGHT = 80
-HEADER_HEIGHT = 40
+CELL_W = 220
+CELL_H = 100
+HEADER_H = 50
+LABEL_W = 70
 MARGIN = 10
 
-def _find_font_path(bold: bool = False) -> str | None:
-    filename = "DejaVuSans-Bold.ttf" if bold else "DejaVuSans.ttf"
+COLOR_BG = (255, 255, 255)
+COLOR_GRID = (180, 180, 180)
+COLOR_HEADER_BG = (230, 230, 230)
+COLOR_TEXT = (20, 20, 20)
+COLOR_DIFF = (230, 126, 34)  # оранжевый — для расхождений знаменателя
+
+
+def _find_cyrillic_font_path(bold: bool) -> str | None:
+    """Ищет реальный TTF с поддержкой кириллицы. Системные пути — best-effort,
+    но основной гарантированный источник — шрифт, который идёт в комплекте с matplotlib."""
+    candidates = [
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf" if bold else
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        "/usr/share/fonts/dejavu/DejaVuSans-Bold.ttf" if bold else
+        "/usr/share/fonts/dejavu/DejaVuSans.ttf",
+    ]
+    for path in candidates:
+        if os.path.exists(path):
+            return path
     try:
         import matplotlib
-        candidate = os.path.join(matplotlib.get_data_path(), "fonts", "ttf", filename)
-        if os.path.isfile(candidate):
-            return candidate
+        mpl_font = os.path.join(
+            matplotlib.get_data_path(), "fonts", "ttf",
+            "DejaVuSans-Bold.ttf" if bold else "DejaVuSans.ttf",
+        )
+        if os.path.exists(mpl_font):
+            return mpl_font
     except Exception:
-        pass
-    
-    system_candidates = [
-        f"/usr/share/fonts/truetype/dejavu/{filename}",
-        f"/usr/share/fonts/dejavu/{filename}",
-    ]
-    for path in system_candidates:
-        if os.path.isfile(path):
-            return path
+        logger.exception("matplotlib недоступен для получения шрифта с кириллицей")
     return None
 
-_FONT_CACHE = {}
 
-def _load_font(size: int, bold: bool = False):
-    cache_key = (size, bold)
-    if cache_key in _FONT_CACHE:
-        return _FONT_CACHE[cache_key]
-    
-    path = _find_font_path(bold=bold)
-    if path:
-        try:
-            font = ImageFont.truetype(path, size)
-            _FONT_CACHE[cache_key] = font
-            return font
-        except Exception:
-            pass
-    
-    font = ImageFont.load_default()
-    _FONT_CACHE[cache_key] = font
-    return font
+_FONT_PATH_REGULAR = _find_cyrillic_font_path(bold=False)
+_FONT_PATH_BOLD = _find_cyrillic_font_path(bold=True)
+
+if not _FONT_PATH_REGULAR:
+    logger.error(
+        "Не найден ни один TTF-шрифт с поддержкой кириллицы! "
+        "Изображения расписания будут нечитаемы (тофу-квадраты вместо текста)."
+    )
+
 
 def _font(size=14):
-    return _load_font(size, bold=False)
+    if _FONT_PATH_REGULAR:
+        try:
+            return ImageFont.truetype(_FONT_PATH_REGULAR, size)
+        except Exception:
+            logger.exception("Не удалось загрузить шрифт %s", _FONT_PATH_REGULAR)
+    return ImageFont.load_default()
+
 
 def _font_bold(size=15):
-    return _load_font(size, bold=True)
+    path = _FONT_PATH_BOLD or _FONT_PATH_REGULAR
+    if path:
+        try:
+            return ImageFont.truetype(path, size)
+        except Exception:
+            logger.exception("Не удалось загрузить жирный шрифт %s", path)
+    return ImageFont.load_default()
+
+
+def _cell_text(entry: dict | None) -> str:
+    if not entry:
+        return ""
+    parts = [entry["subject"]]
+    if entry.get("teacher"):
+        parts.append(entry["teacher"])
+    if entry.get("room"):
+        parts.append(entry["room"])
+    return "\n".join(parts)
+
+
+def _wrap(text: str, width_chars: int = 22):
+    lines = []
+    for raw_line in text.split("\n"):
+        lines.extend(textwrap.wrap(raw_line, width=width_chars) or [""])
+    return lines
+
+
+def _build_full_grid(week_type: str):
+    """Возвращает (pairs_range, {day_idx: {pair_num: entry}})."""
+    grid = {}
+    all_pairs = set()
+    for day in range(6):
+        base = db.get_base_schedule(week_type, day)
+        grid[day] = base
+        all_pairs.update(base.keys())
+    if not all_pairs:
+        all_pairs = {0}
+    pairs_range = list(range(min(all_pairs), max(all_pairs) + 1))
+    return pairs_range, grid
+
+
+def _draw_table(pairs_range, days, get_cell_fn, title: str) -> Image.Image:
+    width = LABEL_W + CELL_W * len(days) + MARGIN * 2
+    height = HEADER_H * 2 + CELL_H * len(pairs_range) + MARGIN * 2
+    img = Image.new("RGB", (width, height), COLOR_BG)
+    draw = ImageDraw.Draw(img)
+    font = _font(13)
+    font_bold = _font_bold(16)
+
+    draw.text((MARGIN, MARGIN), title, fill=COLOR_TEXT, font=font_bold)
+
+    top = MARGIN + HEADER_H
+    # заголовки дней
+    draw.rectangle([MARGIN, top, MARGIN + LABEL_W, top + HEADER_H], fill=COLOR_HEADER_BG, outline=COLOR_GRID)
+    for i, day in enumerate(days):
+        x0 = MARGIN + LABEL_W + i * CELL_W
+        draw.rectangle([x0, top, x0 + CELL_W, top + HEADER_H], fill=COLOR_HEADER_BG, outline=COLOR_GRID)
+        draw.text((x0 + 10, top + 15), WEEKDAYS_RU[day].capitalize(), fill=COLOR_TEXT, font=font_bold)
+
+    # строки пар
+    for r, pair_num in enumerate(pairs_range):
+        y0 = top + HEADER_H + r * CELL_H
+        draw.rectangle([MARGIN, y0, MARGIN + LABEL_W, y0 + CELL_H], fill=COLOR_HEADER_BG, outline=COLOR_GRID)
+        draw.text((MARGIN + 20, y0 + CELL_H // 2 - 8), str(pair_num), fill=COLOR_TEXT, font=font_bold)
+        for c, day in enumerate(days):
+            x0 = MARGIN + LABEL_W + c * CELL_W
+            draw.rectangle([x0, y0, x0 + CELL_W, y0 + CELL_H], outline=COLOR_GRID)
+            get_cell_fn(draw, x0, y0, day, pair_num, font)
+
+    return img
+
 
 def render_schedule_image(week_type: str) -> bytes:
-    """Генерирует изображение расписания в формате: дни как строки, 4 колонки"""
-    
-    schedule_data = {}
-    max_pairs = 0
-    for day_idx in range(6):
-        pairs = db.get_base_schedule(week_type, day_idx)
-        schedule_data[day_idx] = pairs
-        if pairs:
-            max_pairs = max(max_pairs, max(pairs.keys()) + 1)
-    
-    if max_pairs == 0:
-        max_pairs = 4
-    
-    total_width = COL_NUM_W + COL_SUBJECT_W + COL_TEACHER_W + COL_ROOM_W + MARGIN * 2
-    total_height = MARGIN + HEADER_HEIGHT + 6 * (ROW_HEIGHT * max_pairs + HEADER_HEIGHT) + MARGIN
-    
-    img = Image.new('RGB', (total_width, total_height), COLOR_BG)
-    draw = ImageDraw.Draw(img)
-    
-    font_header = _font_bold(16)
-    font_cell = _font(13)
-    font_pair_num = _font_bold(14)
-    
-    title = f"Расписание — {week_type}"
-    draw.text((MARGIN, MARGIN), title, fill=COLOR_HEADER_TEXT, font=font_header)
-    
-    y = MARGIN + HEADER_HEIGHT
-    
-    for day_idx in range(6):
-        day_name = WEEKDAYS_RU[day_idx].capitalize()
-        
-        draw.rectangle(
-            [MARGIN, y, total_width - MARGIN, y + HEADER_HEIGHT],
-            fill=COLOR_HEADER_BG,
-            outline=COLOR_GRID
-        )
-        draw.text((MARGIN + 10, y + 10), day_name, fill=COLOR_HEADER_TEXT, font=font_header)
-        y += HEADER_HEIGHT
-        
-        pairs = schedule_data.get(day_idx, {})
-        
-        for pair_num in range(max_pairs):
-            x_subject = MARGIN + COL_NUM_W
-            x_teacher = x_subject + COL_SUBJECT_W
-            x_room = x_teacher + COL_TEACHER_W
-            
-            draw.rectangle([MARGIN, y, MARGIN + COL_NUM_W, y + ROW_HEIGHT], outline=COLOR_GRID)
-            if pair_num in pairs:
-                draw.text((MARGIN + 20, y + 30), str(pair_num), fill=COLOR_TEXT, font=font_pair_num)
-            
-            draw.rectangle([x_subject, y, x_subject + COL_SUBJECT_W, y + ROW_HEIGHT], outline=COLOR_GRID)
-            draw.rectangle([x_teacher, y, x_teacher + COL_TEACHER_W, y + ROW_HEIGHT], outline=COLOR_GRID)
-            draw.rectangle([x_room, y, x_room + COL_ROOM_W, y + ROW_HEIGHT], outline=COLOR_GRID)
-            
-            if pair_num in pairs:
-                info = pairs[pair_num]
-                
-                subject_text = info.get('subject', '')
-                lines = textwrap.wrap(subject_text, width=35)
-                for i, line in enumerate(lines[:3]):
-                    draw.text((x_subject + 5, y + 5 + i * 18), line, fill=COLOR_TEXT, font=font_cell)
-                
-                teacher_text = info.get('teacher', '')
-                lines = textwrap.wrap(teacher_text, width=25)
-                for i, line in enumerate(lines[:3]):
-                    draw.text((x_teacher + 5, y + 5 + i * 18), line, fill=COLOR_TEXT, font=font_cell)
-                
-                room_text = info.get('room', '')
-                draw.text((x_room + 5, y + 30), room_text, fill=COLOR_TEXT, font=font_cell)
-            
-            y += ROW_HEIGHT
-        
-        y += 10
-    
+    pairs_range, grid = _build_full_grid(week_type)
+    days = list(range(6))
+
+    def draw_cell(draw, x0, y0, day, pair_num, font):
+        entry = grid[day].get(pair_num)
+        text = _cell_text(entry)
+        if not text:
+            return
+        lines = _wrap(text)
+        for i, line in enumerate(lines[:5]):
+            draw.text((x0 + 6, y0 + 6 + i * 16), line, fill=COLOR_TEXT, font=font)
+
+    img = _draw_table(pairs_range, days, draw_cell, f"Расписание — {week_type}")
     buf = io.BytesIO()
     img.save(buf, format="PNG")
     buf.seek(0)
     return buf.getvalue()
 
+
 def render_comparison_image() -> bytes:
-    return render_schedule_image("Числитель")
+    pairs_num, grid_num = _build_full_grid("Числитель")
+    pairs_den, grid_den = _build_full_grid("Знаменатель")
+    pairs_range = sorted(set(pairs_num) | set(pairs_den)) or [0]
+    days = list(range(6))
+
+    def entries_equal(a, b):
+        if a is None and b is None:
+            return True
+        if a is None or b is None:
+            return False
+        return a["subject"] == b["subject"] and a["teacher"] == b["teacher"] and a["room"] == b["room"]
+
+    def draw_cell(draw, x0, y0, day, pair_num, font):
+        e_num = grid_num.get(day, {}).get(pair_num)
+        e_den = grid_den.get(day, {}).get(pair_num)
+        if e_num is None and e_den is None:
+            return  # пустая пара — не выводим
+
+        if entries_equal(e_num, e_den):
+            text = _cell_text(e_num if e_num else e_den)
+            lines = _wrap(text)
+            for i, line in enumerate(lines[:5]):
+                draw.text((x0 + 6, y0 + 6 + i * 16), line, fill=COLOR_TEXT, font=font)
+            return
+
+        # различаются — числитель сверху обычным цветом, знаменатель снизу оранжевым
+        y_cursor = y0 + 4
+        if e_num:
+            for line in _wrap(_cell_text(e_num))[:2]:
+                draw.text((x0 + 6, y_cursor), line, fill=COLOR_TEXT, font=font)
+                y_cursor += 15
+        y_cursor += 4
+        if e_den:
+            for line in _wrap(_cell_text(e_den))[:2]:
+                draw.text((x0 + 6, y_cursor), line, fill=COLOR_DIFF, font=font)
+                y_cursor += 15
+
+    img = _draw_table(pairs_range, days, draw_cell, "Сравнение: Числитель / Знаменатель (расхождения — оранжевым)")
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    buf.seek(0)
+    return buf.getvalue()

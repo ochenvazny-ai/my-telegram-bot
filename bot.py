@@ -14,7 +14,7 @@ import database as db
 import handlers_user as hu
 import handlers_admin as ha
 from config import (
-    BOT_TOKEN, HW_TEXT, HW_DUE, ANN_TEXT, ANN_CONFIRM, PH_DATE,
+    BOT_TOKEN, HW_TEXT, HW_DUE, ANN_TEXT, ANN_CONFIRM, REPLNOTE_TEXT, REPLNOTE_CONFIRM, PH_DATE,
     SCHED_UPLOAD_TEXT, SCHED_FIELD_VALUE, ADMIN_ID, ADMIN_NAME,
 )
 
@@ -73,8 +73,17 @@ def build_conversations():
         fallbacks=fallback,
     )
 
+    conv_add_replnote = ConversationHandler(
+        entry_points=[CallbackQueryHandler(ha.add_replnote_start, pattern="^a_add_replnote$")],
+        states={
+            REPLNOTE_TEXT: [MessageHandler(filters.TEXT & ~filters.COMMAND, ha.add_replnote_text)],
+            REPLNOTE_CONFIRM: [CallbackQueryHandler(ha.add_replnote_confirm, pattern="^replnote_save_(yes|no)$")],
+        },
+        fallbacks=fallback,
+    )
+
     conv_set_ph = ConversationHandler(
-        entry_points=[CallbackQueryHandler(ha.set_ph_start, pattern="^a_set_ph$")],
+        entry_points=[CallbackQueryHandler(ha.set_ph_start, pattern="^phset_manual$")],
         states={
             PH_DATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, ha.set_ph_date)],
         },
@@ -110,7 +119,8 @@ def build_conversations():
     )
 
     return [
-        conv_add_hw, conv_add_ann, conv_set_ph, conv_add_admin, conv_sched_upload, conv_sched_field,
+        conv_add_hw, conv_add_ann, conv_add_replnote, conv_set_ph, conv_add_admin,
+        conv_sched_upload, conv_sched_field,
     ]
 
 
@@ -143,6 +153,8 @@ def main():
     # Инфо -> подменю (звонки / расписание пар с картинками)
     application.add_handler(CallbackQueryHandler(hu.show_bells_menu, pattern="^info_bells$"))
     application.add_handler(CallbackQueryHandler(hu.show_bells_regular, pattern="^bells_regular$"))
+    application.add_handler(CallbackQueryHandler(hu.show_bells_regular_a, pattern="^bells_regular_a$"))
+    application.add_handler(CallbackQueryHandler(hu.show_bells_regular_b, pattern="^bells_regular_b$"))
     application.add_handler(CallbackQueryHandler(hu.show_bells_preholiday, pattern="^bells_preholiday$"))
     application.add_handler(CallbackQueryHandler(hu.show_sched_img_menu, pattern="^info_sched_img$"))
     application.add_handler(CallbackQueryHandler(hu.send_schedule_image, pattern="^schedimg_(num|den|cmp)$"))
@@ -152,8 +164,15 @@ def main():
         filters.Regex("^📋 Меню$") & ~filters.COMMAND, hu.handle_menu_reply_button
     ))
 
-    # Админ-панель — вход и кнопки без диалогов
+    # Админ-панель — верхний уровень и подменю
     application.add_handler(CallbackQueryHandler(ha.admin_panel_entry, pattern="^admin_panel$"))
+    application.add_handler(CallbackQueryHandler(ha.shift_menu, pattern="^a_shift$"))
+    application.add_handler(CallbackQueryHandler(ha.shift_set, pattern="^shiftset_(1|2)$"))
+    application.add_handler(CallbackQueryHandler(ha.hw_menu, pattern="^a_hw_menu$"))
+    application.add_handler(CallbackQueryHandler(ha.ann_menu, pattern="^a_ann_menu$"))
+    application.add_handler(CallbackQueryHandler(ha.ph_menu, pattern="^a_ph_menu$"))
+    application.add_handler(CallbackQueryHandler(ha.admins_menu, pattern="^a_admins_menu$"))
+
     application.add_handler(CallbackQueryHandler(ha.del_hw_list, pattern="^a_del_hw$"))
     application.add_handler(CallbackQueryHandler(ha.del_hw_pick, pattern="^delhw_\\d+$"))
     application.add_handler(CallbackQueryHandler(ha.del_hw_confirm, pattern="^confirm_delhw_\\d+$"))
@@ -162,14 +181,17 @@ def main():
     application.add_handler(CallbackQueryHandler(ha.del_ann_pick, pattern="^delann_\\d+$"))
     application.add_handler(CallbackQueryHandler(ha.del_ann_confirm, pattern="^confirm_delann_\\d+$"))
 
+    application.add_handler(CallbackQueryHandler(ha.set_ph_menu, pattern="^a_set_ph$"))
+    application.add_handler(CallbackQueryHandler(ha.set_ph_quick, pattern="^phset_(tomorrow|daftertomorrow)$"))
     application.add_handler(CallbackQueryHandler(ha.unset_ph_list, pattern="^a_unset_ph$"))
     application.add_handler(CallbackQueryHandler(ha.unset_ph_confirm, pattern="^unsetph_\\d+$"))
 
     application.add_handler(CallbackQueryHandler(ha.del_admin_list, pattern="^a_del_admin$"))
     application.add_handler(CallbackQueryHandler(ha.del_admin_pick, pattern="^deladmin_\\d+$"))
     application.add_handler(CallbackQueryHandler(ha.del_admin_confirm, pattern="^confirm_deladmin_\\d+$"))
+    application.add_handler(CallbackQueryHandler(ha.view_admins, pattern="^a_view_admins$"))
 
-    application.add_handler(CallbackQueryHandler(ha.edit_schedule_menu, pattern="^a_edit_sched$"))
+    application.add_handler(CallbackQueryHandler(ha.edit_schedule_menu, pattern="^a_sched_menu$"))
     application.add_handler(CallbackQueryHandler(ha.del_all_day_menu, pattern="^a_del_all_day$"))
     application.add_handler(CallbackQueryHandler(ha.sched_by_day_start, pattern="^sched_by_day$"))
     application.add_handler(CallbackQueryHandler(ha.sched_day_chosen, pattern="^schedday_\\d+$"))

@@ -132,13 +132,13 @@ def delete_task_db(task_id: int) -> bool:
 
 
 # ---------- ANNOUNCEMENTS ----------
-def add_announcement_db(text: str, author_id: int):
+def add_announcement_db(text: str, author_id: int, is_replacement_note: bool = False):
     try:
         with get_cursor(commit=True) as cur:
             cur.execute(
-                "INSERT INTO announcements (text, created_at, author_id, is_active) "
-                "VALUES (%s, NOW(), %s, true) RETURNING id;",
-                (text, author_id),
+                "INSERT INTO announcements (text, created_at, author_id, is_active, is_replacement_note) "
+                "VALUES (%s, NOW(), %s, true, %s) RETURNING id;",
+                (text, author_id, is_replacement_note),
             )
             return cur.fetchone()["id"]
     except Exception:
@@ -147,15 +147,30 @@ def add_announcement_db(text: str, author_id: int):
 
 
 def get_active_announcements():
+    """Все активные объявления, включая подписи к заменам."""
     try:
         with get_cursor() as cur:
             cur.execute(
-                "SELECT id, text, created_at FROM announcements WHERE is_active = true "
+                "SELECT id, text, created_at, is_replacement_note FROM announcements WHERE is_active = true "
                 "ORDER BY created_at DESC;"
             )
-            return [(r["id"], r["text"], str(r["created_at"])) for r in cur.fetchall()]
+            return [(r["id"], r["text"], str(r["created_at"]), r["is_replacement_note"]) for r in cur.fetchall()]
     except Exception:
         logger.exception("get_active_announcements failed")
+        return []
+
+
+def get_active_replacement_notes():
+    """Только подписи к заменам — для вывода в конце сообщения «Замены»."""
+    try:
+        with get_cursor() as cur:
+            cur.execute(
+                "SELECT text FROM announcements WHERE is_active = true AND is_replacement_note = true "
+                "ORDER BY created_at DESC;"
+            )
+            return [r["text"] for r in cur.fetchall()]
+    except Exception:
+        logger.exception("get_active_replacement_notes failed")
         return []
 
 
@@ -357,3 +372,36 @@ def save_schedule_cache(target_date: date_cls, week_type: str, day: str, entries
     except Exception:
         logger.exception("save_schedule_cache failed")
         return False
+
+
+# ---------- SETTINGS ----------
+def get_setting(key: str, default=None):
+    try:
+        with get_cursor() as cur:
+            cur.execute("SELECT value FROM settings WHERE key = %s;", (key,))
+            row = cur.fetchone()
+            return row["value"] if row else default
+    except Exception:
+        logger.exception("get_setting failed for %s", key)
+        return default
+
+
+def set_setting(key: str, value: str) -> bool:
+    try:
+        with get_cursor(commit=True) as cur:
+            cur.execute("""
+                INSERT INTO settings (key, value, created_at) VALUES (%s, %s, NOW())
+                ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value;
+            """, (key, value))
+        return True
+    except Exception:
+        logger.exception("set_setting failed for %s", key)
+        return False
+
+
+def get_current_shift() -> str:
+    return get_setting("current_shift", "1")
+
+
+def set_current_shift(shift: str) -> bool:
+    return set_setting("current_shift", shift)

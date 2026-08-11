@@ -2,19 +2,22 @@ import re
 import io
 import asyncio
 import logging
+from datetime import datetime, timedelta
 from telegram import Update
 from telegram.ext import (
     ContextTypes, ConversationHandler, CommandHandler, MessageHandler, CallbackQueryHandler, filters,
 )
+
 import database as db
 import keyboards as kb
 from config import (
     INITIAL_ADMIN_ID, WEEKDAYS_RU,
-    HW_TEXT, HW_DUE, ANN_TEXT, ANN_CONFIRM, PH_DATE,
+    HW_TEXT, HW_DUE, ANN_TEXT, ANN_CONFIRM, REPLNOTE_TEXT, REPLNOTE_CONFIRM, PH_DATE,
     SCHED_UPLOAD_TEXT, SCHED_FIELD_VALUE, ADMIN_ID, ADMIN_NAME,
 )
 
 logger = logging.getLogger(__name__)
+
 
 async def _require_admin(update: Update) -> bool:
     query = update.callback_query
@@ -25,12 +28,14 @@ async def _require_admin(update: Update) -> bool:
         return False
     return True
 
+
 async def admin_panel_entry(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     if not await _require_admin(update):
         return
     await query.edit_message_text("👑 Админ-панель", reply_markup=kb.admin_panel_kb())
+
 
 async def back_to_admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -39,14 +44,71 @@ async def back_to_admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE
     await query.edit_message_text("👑 Админ-панель", reply_markup=kb.admin_panel_kb())
     return ConversationHandler.END
 
+
+# ============ ВХОД В ПОДМЕНЮ ВЕРХНЕГО УРОВНЯ ============
+async def hw_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    if not await _require_admin(update):
+        return
+    await query.edit_message_text("📚 Домашнее задание:", reply_markup=kb.hw_menu_kb())
+
+
+async def ann_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    if not await _require_admin(update):
+        return
+    await query.edit_message_text("📢 Объявления:", reply_markup=kb.ann_menu_kb())
+
+
+async def ph_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    if not await _require_admin(update):
+        return
+    await query.edit_message_text("📅 Праздничный день:", reply_markup=kb.ph_menu_kb())
+
+
+async def admins_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    if not await _require_admin(update):
+        return
+    await query.edit_message_text("👥 Админы:", reply_markup=kb.admins_menu_kb())
+
+
+# ============ СМЕНА ============
+async def shift_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    if not await _require_admin(update):
+        return
+    current = await asyncio.to_thread(db.get_current_shift)
+    await query.edit_message_text(
+        f"🔁 Текущая смена: {current}. Выберите смену:", reply_markup=kb.shift_choice_kb()
+    )
+
+
+async def shift_set(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    if not await _require_admin(update):
+        return
+    shift = query.data.split("_")[1]
+    await asyncio.to_thread(db.set_current_shift, shift)
+    await query.edit_message_text(f"✅ Смена изменена на {shift} смену.", reply_markup=kb.admin_panel_kb())
+
+
 # ============ ДОБАВЛЕНИЕ ДЗ ============
 async def add_hw_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     if not await _require_admin(update):
         return ConversationHandler.END
-    await query.edit_message_text(" Введите текст задания:", reply_markup=kb.cancel_button())
+    await query.edit_message_text("📝 Введите текст задания:", reply_markup=kb.cancel_button())
     return HW_TEXT
+
 
 async def add_hw_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['task_text'] = update.message.text.strip()
@@ -54,6 +116,7 @@ async def add_hw_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "📅 Введите срок сдачи (свободная форма) или '-' без срока:", reply_markup=kb.cancel_button()
     )
     return HW_DUE
+
 
 async def add_hw_due(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
@@ -66,10 +129,11 @@ async def add_hw_due(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text("❌ Ошибка при сохранении задания.")
     context.user_data.clear()
-    await update.message.reply_text(" Админ-панель", reply_markup=kb.admin_panel_kb())
+    await update.message.reply_text("👑 Админ-панель", reply_markup=kb.admin_panel_kb())
     return ConversationHandler.END
 
-# ============ УДАЛЕНИЕ ДЗ ============
+
+# ============ УДАЛЕНИЕ ДЗ (без Conversation, чисто кнопки) ============
 async def del_hw_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -80,10 +144,11 @@ async def del_hw_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text("📭 Нет заданий для удаления.", reply_markup=kb.admin_panel_kb())
         return
     lines = ["Выберите задание для удаления:\n"]
-    for idx, (_id, task, due_date, _) in enumerate(tasks, start=1):
+    for idx, (_, task, due_date, _) in enumerate(tasks, start=1):
         due_str = f" ({due_date})" if due_date else ""
         lines.append(f"{idx}️⃣ {task}{due_str}")
     await query.edit_message_text("\n".join(lines), reply_markup=kb.delete_hw_kb(tasks))
+
 
 async def del_hw_pick(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -101,6 +166,7 @@ async def del_hw_pick(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"⚠️ Точно удалить задание?\n\n{task_text}", reply_markup=kb.confirm_kb("delhw", task_id)
     )
 
+
 async def del_hw_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -116,10 +182,11 @@ async def del_hw_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text("📭 Нет текущих домашних заданий.", reply_markup=kb.admin_panel_kb())
     else:
         lines = ["Выберите задание для удаления:\n"]
-        for idx, (_id, task, due_date, _) in enumerate(tasks, start=1):
+        for idx, (_, task, due_date, _) in enumerate(tasks, start=1):
             due_str = f" ({due_date})" if due_date else ""
             lines.append(f"{idx}️⃣ {task}{due_str}")
         await query.edit_message_text("\n".join(lines), reply_markup=kb.delete_hw_kb(tasks))
+
 
 # ============ СОЗДАНИЕ ОБЪЯВЛЕНИЯ ============
 async def add_ann_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -130,6 +197,7 @@ async def add_ann_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.edit_message_text("📝 Введите текст объявления:", reply_markup=kb.cancel_button())
     return ANN_TEXT
 
+
 async def add_ann_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
     context.user_data['ann_text'] = text
@@ -139,7 +207,10 @@ async def add_ann_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     return ANN_CONFIRM
 
-RATE_LIMIT_DELAY = 0.05
+
+RATE_LIMIT_DELAY = 0.05  # ~20 сообщений/сек, с запасом от лимита Telegram
+
+
 async def _broadcast(bot, text: str) -> tuple[int, int]:
     user_ids = await asyncio.to_thread(db.get_all_user_ids)
     sent, failed = 0, 0
@@ -153,23 +224,27 @@ async def _broadcast(bot, text: str) -> tuple[int, int]:
         await asyncio.sleep(RATE_LIMIT_DELAY)
     return sent, failed
 
+
 async def add_ann_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     text = context.user_data.get('ann_text', '')
     author_id = update.effective_user.id
     ann_id = await asyncio.to_thread(db.add_announcement_db, text, author_id)
+
     if query.data == "ann_send_yes":
         await query.edit_message_text("⏳ Рассылаю объявление...")
         sent, failed = await _broadcast(context.bot, text)
         await query.message.reply_text(f"✅ Отправлено {sent}, ❌ не доставлено {failed}")
     else:
         await query.edit_message_text("✅ Объявление сохранено. Рассылка не выполнялась.")
+
     context.user_data.clear()
-    await query.message.reply_text(" Админ-панель", reply_markup=kb.admin_panel_kb())
+    await query.message.reply_text("👑 Админ-панель", reply_markup=kb.admin_panel_kb())
     return ConversationHandler.END
 
-# ============ УДАЛЕНИЕ ОБЪЯВЛЕНИЯ ============
+
+# ============ УДАЛЕНИЕ ОБЪЯВЛЕНИЯ (включая подписи к заменам) ============
 async def del_ann_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -180,9 +255,11 @@ async def del_ann_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text("📭 Нет активных объявлений.", reply_markup=kb.admin_panel_kb())
         return
     lines = ["Выберите объявление для удаления:\n"]
-    for idx, (_id, text, created_at) in enumerate(anns, start=1):
-        lines.append(f"{idx}️⃣ {created_at.split(' ')[0]}: {text}")
+    for idx, (_, text, created_at, is_note) in enumerate(anns, start=1):
+        prefix = "📝 " if is_note else ""
+        lines.append(f"{idx}️⃣ {prefix}{created_at.split(' ')[0]}: {text}")
     await query.edit_message_text("\n".join(lines), reply_markup=kb.delete_ann_kb(anns))
+
 
 async def del_ann_pick(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -192,6 +269,7 @@ async def del_ann_pick(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ann_id = int(query.data.split("_")[1])
     context.user_data['pending_ann_id'] = ann_id
     await query.edit_message_text("⚠️ Точно удалить объявление?", reply_markup=kb.confirm_kb("delann", ann_id))
+
 
 async def del_ann_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -203,21 +281,89 @@ async def del_ann_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await asyncio.to_thread(db.deactivate_announcement_db, ann_id)
     anns = await asyncio.to_thread(db.get_active_announcements)
     if not anns:
-        await query.edit_message_text(" Нет активных объявлений.", reply_markup=kb.admin_panel_kb())
+        await query.edit_message_text("📭 Нет активных объявлений.", reply_markup=kb.admin_panel_kb())
     else:
         lines = ["Выберите объявление для удаления:\n"]
-        for idx, (_id, text, created_at) in enumerate(anns, start=1):
-            lines.append(f"{idx}️⃣ {created_at.split(' ')[0]}: {text}")
+        for idx, (_, text, created_at, is_note) in enumerate(anns, start=1):
+            prefix = "📝 " if is_note else ""
+            lines.append(f"{idx}️⃣ {prefix}{created_at.split(' ')[0]}: {text}")
         await query.edit_message_text("\n".join(lines), reply_markup=kb.delete_ann_kb(anns))
 
+
+# ============ ПОДПИСЬ К ЗАМЕНЕ (без рассылки) ============
+async def add_replnote_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    if not await _require_admin(update):
+        return ConversationHandler.END
+    await query.edit_message_text(
+        "📝 Введите текст подписи, которая будет отображаться в разделе «Замены» и в общем списке объявлений:",
+        reply_markup=kb.cancel_button(),
+    )
+    return REPLNOTE_TEXT
+
+
+async def add_replnote_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text.strip()
+    context.user_data['replnote_text'] = text
+    await update.message.reply_text(
+        f"📝 Текст подписи:\n{text}\n\nСохранить?", reply_markup=kb.replnote_confirm_kb()
+    )
+    return REPLNOTE_CONFIRM
+
+
+async def add_replnote_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    if query.data == "replnote_save_yes":
+        text = context.user_data.get('replnote_text', '')
+        author_id = update.effective_user.id
+        await asyncio.to_thread(db.add_announcement_db, text, author_id, True)
+        await query.edit_message_text(
+            "✅ Подпись к замене сохранена. Она будет показываться в разделе «Замены» и в общем списке объявлений."
+        )
+    else:
+        await query.edit_message_text("❌ Отменено.")
+    context.user_data.clear()
+    await query.message.reply_text("👑 Админ-панель", reply_markup=kb.admin_panel_kb())
+    return ConversationHandler.END
+
+
 # ============ ПРЕДПРАЗДНИЧНЫЕ ДНИ ============
+async def set_ph_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Точка входа «Назначить предпраздничный день» — теперь сначала выбор варианта."""
+    query = update.callback_query
+    await query.answer()
+    if not await _require_admin(update):
+        return
+    await query.edit_message_text("Когда предпраздничный день?", reply_markup=kb.ph_set_choice_kb())
+
+
+async def set_ph_quick(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    if not await _require_admin(update):
+        return
+    days_ahead = 1 if query.data == "phset_tomorrow" else 2
+    target = datetime.now().date() + timedelta(days=days_ahead)
+    mmdd = target.strftime("%m-%d")
+    ok = await asyncio.to_thread(db.set_pre_holiday, mmdd)
+    display = target.strftime("%d.%m")
+    if ok:
+        await query.edit_message_text(f"✅ Предпраздничный день {display} назначен.", reply_markup=kb.admin_panel_kb())
+    else:
+        await query.edit_message_text("❌ Ошибка при сохранении.", reply_markup=kb.admin_panel_kb())
+
+
 async def set_ph_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Ручной ввод даты — вызывается из кнопки «Назначить дату»."""
     query = update.callback_query
     await query.answer()
     if not await _require_admin(update):
         return ConversationHandler.END
     await query.edit_message_text("Введите дату в формате ДД.ММ (например, 09.05):", reply_markup=kb.cancel_button())
     return PH_DATE
+
 
 async def set_ph_date(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
@@ -237,6 +383,7 @@ async def set_ph_date(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("👑 Админ-панель", reply_markup=kb.admin_panel_kb())
     return ConversationHandler.END
 
+
 async def unset_ph_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -246,10 +393,11 @@ async def unset_ph_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not items:
         await query.edit_message_text("📭 Нет активных предпраздничных дней.", reply_markup=kb.admin_panel_kb())
         return
-    display_items = [(_id, f"{d.split('-')[1]}.{d.split('-')[0]}") for _id, d in items]
+    display_items = [(i, f"{d.split('-')[1]}.{d.split('-')[0]}") for i, d in items]
     await query.edit_message_text(
         "Выберите предпраздничный день для отмены:", reply_markup=kb.pre_holiday_list_kb(display_items, "unsetph")
     )
+
 
 async def unset_ph_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -262,10 +410,11 @@ async def unset_ph_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not items:
         await query.edit_message_text("📭 Нет активных предпраздничных дней.", reply_markup=kb.admin_panel_kb())
     else:
-        display_items = [(_id, f"{d.split('-')[1]}.{d.split('-')[0]}") for _id, d in items]
+        display_items = [(i, f"{d.split('-')[1]}.{d.split('-')[0]}") for i, d in items]
         await query.edit_message_text(
-            " Отменено. Осталось:", reply_markup=kb.pre_holiday_list_kb(display_items, "unsetph")
+            "🗑 Отменено. Осталось:", reply_markup=kb.pre_holiday_list_kb(display_items, "unsetph")
         )
+
 
 # ============ АДМИНЫ ============
 async def add_admin_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -279,6 +428,7 @@ async def add_admin_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     return ADMIN_ID
 
+
 async def add_admin_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
     if not text.isdigit():
@@ -287,6 +437,7 @@ async def add_admin_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['new_admin_id'] = int(text)
     await update.message.reply_text("Введите имя для отображения в списке:", reply_markup=kb.cancel_button())
     return ADMIN_NAME
+
 
 async def add_admin_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     name = update.message.text.strip()
@@ -300,6 +451,7 @@ async def add_admin_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("👑 Админ-панель", reply_markup=kb.admin_panel_kb())
     return ConversationHandler.END
 
+
 async def del_admin_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -311,6 +463,7 @@ async def del_admin_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text("Нет доступных для удаления админов.", reply_markup=kb.admin_panel_kb())
         return
     await query.edit_message_text("Выберите админа для удаления:", reply_markup=buttons)
+
 
 async def del_admin_pick(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -331,6 +484,7 @@ async def del_admin_pick(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"⚠️ Точно удалить админа {name} (ID {target_id})?", reply_markup=kb.confirm_kb("deladmin", target_id)
     )
 
+
 async def del_admin_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -341,6 +495,22 @@ async def del_admin_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await asyncio.to_thread(db.remove_admin_by_user_id, target_id)
     await query.edit_message_text("✅ Админ удалён.", reply_markup=kb.admin_panel_kb())
 
+
+async def view_admins(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    if not await _require_admin(update):
+        return
+    admins = await asyncio.to_thread(db.get_all_admins)
+    if not admins:
+        await query.edit_message_text("📭 Список админов пуст.", reply_markup=kb.back_button("a_admins_menu"))
+        return
+    lines = ["👥 Список админов:\n"]
+    for idx, (user_id, username, name) in enumerate(admins, start=1):
+        lines.append(f"{idx}️⃣ {name} (ID: {user_id})")
+    await query.edit_message_text("\n".join(lines), reply_markup=kb.back_button("a_admins_menu"))
+
+
 # ============ РЕДАКТОР РАСПИСАНИЯ ============
 async def edit_schedule_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -349,103 +519,109 @@ async def edit_schedule_menu(update: Update, context: ContextTypes.DEFAULT_TYPE)
         return
     await query.edit_message_text("Изменение расписания:", reply_markup=kb.schedule_edit_menu_kb())
 
+
 async def sched_upload_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     if not await _require_admin(update):
         return ConversationHandler.END
     await query.edit_message_text(
-        "📤 Пришлите файл .xlsx с расписанием в формате:\n\n"
-        "• Дни недели (Понедельник, Вторник, etc.) как заголовки строк\n"
-        "• Колонки: № | Дисциплина | Преподаватель | Кабинет\n"
-        "• Номера пар: '0 пара', '1 пара', '2 пара' и т.д.\n\n"
-        "Пример:\n"
-        "Понедельник\n"
-        "1 пара | Основы алгоритмизации | Вершинина Н.А. | Б302\n"
-        "2 пара | Русский язык | Грибанова Е.Н. | Б401",
+        "📤 Пришлите файл .xlsx с заголовком в первой строке (порядок колонок не важен):\n\n"
+        "Тип недели | День | Номер пары | Предмет | Преподаватель | Кабинет\n\n"
+        "Тип недели: «Числитель» или «Знаменатель».\n"
+        "День: понедельник…суббота.",
         reply_markup=kb.cancel_button(),
     )
     return SCHED_UPLOAD_TEXT
 
-def _parse_pair_number(value):
-    """Извлекает номер пары из строки типа '1 пара' или просто числа."""
-    if value is None:
-        return None
-    value_str = str(value).strip()
-    if not value_str:
-        return None
-    # Пробуем просто int
-    try:
-        return int(value_str)
-    except ValueError:
-        pass
-    # Ищем число в начале строки (например, "1 пара" -> 1)
-    match = re.match(r'^(\d+)', value_str)
-    if match:
-        return int(match.group(1))
-    return None
+
+_HEADER_ALIASES = {
+    "week_type": ["тип недели", "неделя", "числитель/знаменатель"],
+    "day": ["день", "день недели"],
+    "pair_number": ["номер пары", "пара", "№ пары"],
+    "subject": ["предмет", "дисциплина"],
+    "teacher": ["преподаватель", "препод"],
+    "room": ["кабинет", "аудитория"],
+}
+
+
+def _detect_columns(header_row) -> dict:
+    """Ищет индекс колонки для каждого логического поля по заголовку (регистронезависимо)."""
+    col_map = {}
+    for idx, cell in enumerate(header_row):
+        if cell is None:
+            continue
+        cell_norm = str(cell).strip().lower()
+        for field, aliases in _HEADER_ALIASES.items():
+            if field in col_map:
+                continue
+            if cell_norm in aliases:
+                col_map[field] = idx
+    return col_map
+
 
 def _parse_schedule_xlsx(file_bytes: bytes):
-    """Парсит .xlsx в формате: Дни недели как заголовки строк, 4 колонки"""
+    """Парсит .xlsx в {(week_type, day_index): [entries]} по заголовкам колонок (порядок не важен)."""
     import openpyxl
     wb = openpyxl.load_workbook(io.BytesIO(file_bytes), data_only=True)
     ws = wb.active
-    
+    rows = list(ws.iter_rows(values_only=True))
+    if not rows:
+        return {}, ["Файл пуст"]
+
+    col_map = _detect_columns(rows[0])
+    required = {"week_type", "day", "pair_number", "subject"}
+    missing = required - col_map.keys()
+    if missing:
+        return {}, [f"Не найдены обязательные колонки в заголовке: {', '.join(missing)}. "
+                     f"Проверьте, что первая строка файла — заголовки."]
+
     result = {}
     errors = []
-    
-    day_mapping = {
-        "понедельник": 0, "вторник": 1, "среда": 2, 
-        "четверг": 3, "пятница": 4, "суббота": 5
-    }
-    
-    current_day = None
-    current_week_type = "Числитель"
-    
-    for row_idx, row in enumerate(ws.iter_rows(min_row=1, values_only=True), start=1):
+    for row_idx, row in enumerate(rows[1:], start=2):
         if row is None or all(c is None for c in row):
             continue
-        
-        first_cell = str(row[0]).strip().lower() if row[0] else ""
-        
-        # Проверяем тип недели
-        if first_cell in ("числитель", "знаменатель"):
-            current_week_type = "Числитель" if first_cell == "числитель" else "Знаменатель"
+
+        def get(field):
+            i = col_map.get(field)
+            return row[i] if i is not None and i < len(row) else None
+
+        week_type_raw = get("week_type")
+        day_raw = get("day")
+        pair_raw = get("pair_number")
+        subject_raw = get("subject")
+        teacher_raw = get("teacher")
+        room_raw = get("room")
+
+        if not week_type_raw or not day_raw or pair_raw is None or not subject_raw:
+            errors.append(f"Строка {row_idx}: пропущены обязательные поля")
             continue
-        
-        # Проверяем день недели
-        if first_cell in day_mapping:
-            current_day = day_mapping[first_cell]
+
+        week_type = str(week_type_raw).strip()
+        if week_type not in ("Числитель", "Знаменатель"):
+            errors.append(f"Строка {row_idx}: неверный тип недели '{week_type}'")
             continue
-        
-        if current_day is None:
+
+        day_norm = str(day_raw).strip().lower()
+        if day_norm not in WEEKDAYS_RU:
+            errors.append(f"Строка {row_idx}: неизвестный день '{day_raw}'")
             continue
-        
-        # Пропускаем заголовки
-        if first_cell in ("№", "номер", "номер пары", "шаблон расписания"):
+        day_idx = WEEKDAYS_RU.index(day_norm)
+
+        try:
+            pair_num = int(pair_raw)
+        except (TypeError, ValueError):
+            errors.append(f"Строка {row_idx}: номер пары не число")
             continue
-        
-        # Извлекаем номер пары
-        pair_num = _parse_pair_number(row[0])
-        if pair_num is None:
-            errors.append(f"Строка {row_idx}: номер пары не распознан ('{row[0]}')")
-            continue
-        
-        subject = str(row[1]).strip() if row[1] else ""
-        teacher = str(row[2]).strip() if row[2] else ""
-        room = str(row[3]).strip() if row[3] else ""
-        
-        if not subject:
-            continue
-        
-        result.setdefault((current_week_type, current_day), []).append({
+
+        result.setdefault((week_type, day_idx), []).append({
             "pair_number": pair_num,
-            "subject": subject,
-            "teacher": teacher,
-            "room": room,
+            "subject": str(subject_raw).strip(),
+            "teacher": str(teacher_raw).strip() if teacher_raw else "",
+            "room": str(room_raw).strip() if room_raw else "",
         })
-    
     return result, errors
+
 
 async def sched_upload_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
     document = update.message.document
@@ -454,10 +630,10 @@ async def sched_upload_document(update: Update, context: ContextTypes.DEFAULT_TY
             "❌ Нужен файл в формате .xlsx. Пришлите файл ещё раз:", reply_markup=kb.cancel_button()
         )
         return SCHED_UPLOAD_TEXT
-    
+
     tg_file = await document.get_file()
     file_bytes = bytes(await tg_file.download_as_bytearray())
-    
+
     try:
         parsed, errors = await asyncio.to_thread(_parse_schedule_xlsx, file_bytes)
     except Exception:
@@ -467,21 +643,20 @@ async def sched_upload_document(update: Update, context: ContextTypes.DEFAULT_TY
             reply_markup=kb.cancel_button(),
         )
         return SCHED_UPLOAD_TEXT
-    
+
     if not parsed:
         msg = "❌ Не удалось распознать ни одной строки."
         if errors:
             msg += "\n\nОшибки:\n" + "\n".join(errors[:10])
         await update.message.reply_text(msg, reply_markup=kb.cancel_button())
         return SCHED_UPLOAD_TEXT
-    
+
     preview_lines = ["Найдено:\n"]
     for (week_type, day_idx), entries in parsed.items():
         preview_lines.append(f"{week_type}, {WEEKDAYS_RU[day_idx]}: {len(entries)} пар")
     if errors:
         preview_lines.append(f"\n⚠️ Пропущено строк с ошибками: {len(errors)}")
         preview_lines.extend(errors[:5])
-    
     context.user_data['pending_schedule'] = parsed
     preview_lines.append("\n⚠️ Это ЗАМЕНИТ текущее расписание для указанных дней. Подтвердить?")
     await update.message.reply_text(
@@ -489,6 +664,7 @@ async def sched_upload_document(update: Update, context: ContextTypes.DEFAULT_TY
         reply_markup=kb.confirm_kb("schedupload", "0"),
     )
     return ConversationHandler.END
+
 
 async def sched_upload_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -501,6 +677,7 @@ async def sched_upload_confirm(update: Update, context: ContextTypes.DEFAULT_TYP
         await asyncio.to_thread(db.replace_day_schedule, week_type, day_idx, entries)
     await query.edit_message_text("✅ Расписание обновлено.", reply_markup=kb.admin_panel_kb())
 
+
 async def del_all_day_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -511,12 +688,14 @@ async def del_all_day_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=kb.delete_all_day_kb(),
     )
 
+
 async def sched_by_day_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     if not await _require_admin(update):
         return
     await query.edit_message_text("Выберите день недели:", reply_markup=kb.weekday_choice_kb())
+
 
 async def sched_day_chosen(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -525,6 +704,7 @@ async def sched_day_chosen(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.edit_message_text(
         f"{WEEKDAYS_RU[day_idx].capitalize()}. Выберите тип недели:", reply_markup=kb.week_type_kb(day_idx)
     )
+
 
 async def sched_delete_all_day(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -535,6 +715,7 @@ async def sched_delete_all_day(update: Update, context: ContextTypes.DEFAULT_TYP
         f"🗑 Все пары на {WEEKDAYS_RU[day_idx]} удалены (оба типа недели).",
         reply_markup=kb.admin_panel_kb(),
     )
+
 
 async def sched_week_type_chosen(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -551,6 +732,7 @@ async def sched_week_type_chosen(update: Update, context: ContextTypes.DEFAULT_T
         text = "\n".join(lines)
     await query.edit_message_text(text, reply_markup=kb.pair_choice_kb(pairs, week_type, day_idx))
 
+
 async def sched_pair_chosen(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -559,6 +741,7 @@ async def sched_pair_chosen(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"Пара {pair_num} ({week_type}, {WEEKDAYS_RU[int(day_idx)]}). Что изменить?",
         reply_markup=kb.pair_field_kb(week_type, int(day_idx), int(pair_num)),
     )
+
 
 async def sched_new_pair(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -574,6 +757,7 @@ async def sched_new_pair(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.edit_message_text(f"Введите предмет для новой пары {next_pair}:", reply_markup=kb.cancel_button())
     return SCHED_FIELD_VALUE
 
+
 async def sched_delete_pair(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -585,7 +769,8 @@ async def sched_delete_pair(update: Update, context: ContextTypes.DEFAULT_TYPE):
     for num, info in sorted(pairs.items()):
         lines.append(f"{num}. {info['subject']} ({info['teacher']}) — {info['room']}")
     await query.edit_message_text("\n".join(lines) or "Пар пока нет.",
-                                  reply_markup=kb.pair_choice_kb(pairs, week_type, int(day_idx)))
+                                   reply_markup=kb.pair_choice_kb(pairs, week_type, int(day_idx)))
+
 
 async def sched_field_chosen(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -598,11 +783,13 @@ async def sched_field_chosen(update: Update, context: ContextTypes.DEFAULT_TYPE)
     await query.edit_message_text(f"Введите новое значение ({field_names[field]}):", reply_markup=kb.cancel_button())
     return SCHED_FIELD_VALUE
 
+
 async def sched_field_value(update: Update, context: ContextTypes.DEFAULT_TYPE):
     value = update.message.text.strip()
     edit = context.user_data.get('sched_edit', {})
     week_type, day_idx, pair_num = edit.get('week_type'), edit.get('day_idx'), edit.get('pair_num')
-    
+
+    # Сценарий "новая пара": последовательно спрашиваем subject -> teacher -> room
     if edit.get('field') in ('subject', 'teacher', 'room') and 'is_new' not in edit:
         pairs_existing = await asyncio.to_thread(db.get_base_schedule, week_type, day_idx)
         is_new_pair = pair_num not in pairs_existing
@@ -613,7 +800,7 @@ async def sched_field_value(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.user_data['sched_edit'] = edit
             await update.message.reply_text("Теперь введите преподавателя:", reply_markup=kb.cancel_button())
             return SCHED_FIELD_VALUE
-    
+
     if edit.get('is_new'):
         if edit['field'] == 'teacher':
             edit['teacher'] = value
@@ -630,7 +817,8 @@ async def sched_field_value(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.user_data.pop('sched_edit', None)
             await update.message.reply_text("👑 Админ-панель", reply_markup=kb.admin_panel_kb())
             return ConversationHandler.END
-    
+
+    # Обычное редактирование одного поля существующей пары
     pairs = await asyncio.to_thread(db.get_base_schedule, week_type, day_idx)
     current = pairs.get(pair_num, {"subject": "", "teacher": "", "room": ""})
     current[edit['field']] = value
@@ -639,8 +827,9 @@ async def sched_field_value(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     await update.message.reply_text("✅ Обновлено.")
     context.user_data.pop('sched_edit', None)
-    await update.message.reply_text(" Админ-панель", reply_markup=kb.admin_panel_kb())
+    await update.message.reply_text("👑 Админ-панель", reply_markup=kb.admin_panel_kb())
     return ConversationHandler.END
+
 
 # ============ ОТМЕНА ============
 async def cancel_conversation(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -648,5 +837,5 @@ async def cancel_conversation(update: Update, context: ContextTypes.DEFAULT_TYPE
     query = update.callback_query
     if query:
         await query.answer()
-        await query.edit_message_text("❌ Отменено.\n\n Админ-панель", reply_markup=kb.admin_panel_kb())
+        await query.edit_message_text("❌ Отменено.\n\n👑 Админ-панель", reply_markup=kb.admin_panel_kb())
     return ConversationHandler.END

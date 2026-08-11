@@ -14,31 +14,6 @@ def main_menu_kb(is_admin_user: bool):
     return InlineKeyboardMarkup(kb)
 
 
-def info_menu_kb():
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("📞 Расписание звонков", callback_data="info_bells")],
-        [InlineKeyboardButton("📚 Расписание пар", callback_data="info_sched_img")],
-        [InlineKeyboardButton("🔙 Назад", callback_data="main_menu")],
-    ])
-
-
-def bells_choice_kb():
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("Обычные дни", callback_data="bells_regular")],
-        [InlineKeyboardButton("Предпраздничные дни", callback_data="bells_preholiday")],
-        [InlineKeyboardButton("🔙 Назад", callback_data="menu_info")],
-    ])
-
-
-def schedule_img_choice_kb():
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("Числитель", callback_data="schedimg_num")],
-        [InlineKeyboardButton("Знаменатель", callback_data="schedimg_den")],
-        [InlineKeyboardButton("Оба (Сравнение)", callback_data="schedimg_cmp")],
-        [InlineKeyboardButton("🔙 Назад", callback_data="menu_info")],
-    ])
-
-
 def reply_menu_button():
     return ReplyKeyboardMarkup([[KeyboardButton("📋 Меню")]], resize_keyboard=True)
 
@@ -58,22 +33,120 @@ def confirm_kb(action: str, item_id):
     ])
 
 
+# ---------- ИНФО ----------
+def info_menu_kb():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("📞 Расписание звонков", callback_data="info_bells")],
+        [InlineKeyboardButton("📚 Расписание пар", callback_data="info_sched_img")],
+        [InlineKeyboardButton("🔙 Назад", callback_data="main_menu")],
+    ])
+
+
+def bells_choice_kb():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("Обычные дни", callback_data="bells_regular")],
+        [InlineKeyboardButton("Предпраздничные дни", callback_data="bells_preholiday")],
+        [InlineKeyboardButton("🔙 Назад", callback_data="menu_info")],
+    ])
+
+
+def bells_building_kb():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("По А корпусу", callback_data="bells_regular_a")],
+        [InlineKeyboardButton("По Б корпусу", callback_data="bells_regular_b")],
+        [InlineKeyboardButton("🔙 Назад", callback_data="info_bells")],
+    ])
+
+
+def schedule_img_choice_kb():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("Числитель", callback_data="schedimg_num")],
+        [InlineKeyboardButton("Знаменатель", callback_data="schedimg_den")],
+        [InlineKeyboardButton("Оба (Сравнение)", callback_data="schedimg_cmp")],
+        [InlineKeyboardButton("🔙 Назад", callback_data="menu_info")],
+    ])
+
+
+# ---------- АДМИН-ПАНЕЛЬ (верхний уровень, сгруппированная) ----------
 def admin_panel_kb():
     kb = [
-        [InlineKeyboardButton("➕ Добавить ДЗ", callback_data="a_add_hw")],
-        [InlineKeyboardButton("❌ Удалить ДЗ", callback_data="a_del_hw")],
-        [InlineKeyboardButton("📢 Создать объявление", callback_data="a_add_ann")],
-        [InlineKeyboardButton("➖ Удалить объявление", callback_data="a_del_ann")],
-        [InlineKeyboardButton("📅 Назначить предпраздничный день", callback_data="a_set_ph")],
-        [InlineKeyboardButton("❌ Отменить предпраздничный день", callback_data="a_unset_ph")],
-        [InlineKeyboardButton("✏️ Изменить расписание", callback_data="a_edit_sched")],
-        [InlineKeyboardButton("➕ Добавить админа", callback_data="a_add_admin")],
-        [InlineKeyboardButton("➖ Удалить админа", callback_data="a_del_admin")],
+        [InlineKeyboardButton("🔁 Изменить смену", callback_data="a_shift")],
+        [InlineKeyboardButton("📚 Домашнее задание", callback_data="a_hw_menu")],
+        [InlineKeyboardButton("📢 Объявления", callback_data="a_ann_menu")],
+        [InlineKeyboardButton("📅 Праздничный день", callback_data="a_ph_menu")],
+        [InlineKeyboardButton("⚙️ Настроить Расписание", callback_data="a_sched_menu")],
+        [InlineKeyboardButton("👥 Админы", callback_data="a_admins_menu")],
         [InlineKeyboardButton("🔙 Главное меню", callback_data="main_menu")],
     ]
     return InlineKeyboardMarkup(kb)
 
 
+def shift_choice_kb():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("1 смена", callback_data="shiftset_1")],
+        [InlineKeyboardButton("2 смена", callback_data="shiftset_2")],
+        [InlineKeyboardButton("❌ Отмена", callback_data="admin_panel")],
+    ])
+
+
+def hw_menu_kb():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("➕ Добавить ДЗ", callback_data="a_add_hw")],
+        [InlineKeyboardButton("❌ Удалить ДЗ", callback_data="a_del_hw")],
+        [InlineKeyboardButton("🔙 Назад", callback_data="admin_panel")],
+    ])
+
+
+def ann_menu_kb():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("📢 Создать объявление", callback_data="a_add_ann")],
+        [InlineKeyboardButton("➖ Удалить объявление", callback_data="a_del_ann")],
+        [InlineKeyboardButton("📝 Подпись к замене", callback_data="a_add_replnote")],
+        [InlineKeyboardButton("🔙 Назад", callback_data="admin_panel")],
+    ])
+
+
+def ph_menu_kb():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("📅 Назначить предпраздничный день", callback_data="a_set_ph")],
+        [InlineKeyboardButton("❌ Отменить предпраздничный день", callback_data="a_unset_ph")],
+        [InlineKeyboardButton("🔙 Назад", callback_data="admin_panel")],
+    ])
+
+
+def ph_set_choice_kb():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("Завтра", callback_data="phset_tomorrow")],
+        [InlineKeyboardButton("Послезавтра", callback_data="phset_daftertomorrow")],
+        [InlineKeyboardButton("Назначить дату", callback_data="phset_manual")],
+        [InlineKeyboardButton("❌ Отмена", callback_data="admin_panel")],
+    ])
+
+
+def admins_menu_kb():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("➕ Добавить админа", callback_data="a_add_admin")],
+        [InlineKeyboardButton("➖ Удалить админа", callback_data="a_del_admin")],
+        [InlineKeyboardButton("👀 Посмотреть Админов", callback_data="a_view_admins")],
+        [InlineKeyboardButton("🔙 Назад", callback_data="admin_panel")],
+    ])
+
+
+def announcement_confirm_kb():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("✅ Да, отправить", callback_data="ann_send_yes")],
+        [InlineKeyboardButton("❌ Нет, только сохранить", callback_data="ann_send_no")],
+    ])
+
+
+def replnote_confirm_kb():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("✅ Да, сохранить", callback_data="replnote_save_yes")],
+        [InlineKeyboardButton("❌ Нет, отмена", callback_data="replnote_save_no")],
+    ])
+
+
+# ---------- СПИСКИ ДЛЯ УДАЛЕНИЯ ----------
 def delete_hw_kb(tasks):
     if not tasks:
         return None
@@ -89,9 +162,12 @@ def delete_ann_kb(anns):
     if not anns:
         return None
     buttons = []
-    for idx, (ann_id, text, created_at) in enumerate(anns, start=1):
-        short = text[:30] + "..." if len(text) > 30 else text
-        buttons.append([InlineKeyboardButton(f"{idx}. {short}", callback_data=f"delann_{ann_id}")])
+    for idx, item in enumerate(anns, start=1):
+        ann_id, text = item[0], item[1]
+        is_note = item[3] if len(item) > 3 else False
+        prefix = "📝 " if is_note else ""
+        short = text[:28] + "..." if len(text) > 28 else text
+        buttons.append([InlineKeyboardButton(f"{idx}. {prefix}{short}", callback_data=f"delann_{ann_id}")])
     buttons.append([InlineKeyboardButton("🔙 Назад", callback_data="admin_panel")])
     return InlineKeyboardMarkup(buttons)
 
@@ -116,20 +192,7 @@ def pre_holiday_list_kb(items, action_prefix):
     return InlineKeyboardMarkup(buttons)
 
 
-def announcement_confirm_kb():
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("✅ Да, отправить", callback_data="ann_send_yes")],
-        [InlineKeyboardButton("❌ Нет, только сохранить", callback_data="ann_send_no")],
-    ])
-
-
-def weekday_choice_kb():
-    buttons = [[InlineKeyboardButton(WEEKDAYS_RU[i].capitalize(), callback_data=f"schedday_{i}")]
-               for i in range(6)]
-    buttons.append([InlineKeyboardButton("🔙 Назад", callback_data="admin_panel")])
-    return InlineKeyboardMarkup(buttons)
-
-
+# ---------- РЕДАКТОР РАСПИСАНИЯ ----------
 def schedule_edit_menu_kb():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("📤 Загрузить из Excel", callback_data="sched_upload")],
@@ -146,12 +209,19 @@ def delete_all_day_kb():
     return InlineKeyboardMarkup(buttons)
 
 
+def weekday_choice_kb():
+    buttons = [[InlineKeyboardButton(WEEKDAYS_RU[i].capitalize(), callback_data=f"schedday_{i}")]
+               for i in range(6)]
+    buttons.append([InlineKeyboardButton("🔙 Назад", callback_data="admin_panel")])
+    return InlineKeyboardMarkup(buttons)
+
+
 def week_type_kb(day_index: int):
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("Числитель", callback_data=f"weektype_Числитель_{day_index}")],
         [InlineKeyboardButton("Знаменатель", callback_data=f"weektype_Знаменатель_{day_index}")],
         [InlineKeyboardButton("🗑 Удалить все пары на день", callback_data=f"delallday_{day_index}")],
-        [InlineKeyboardButton("🔙 Назад", callback_data="a_edit_sched")],
+        [InlineKeyboardButton("🔙 Назад", callback_data="a_sched_menu")],
     ])
 
 
