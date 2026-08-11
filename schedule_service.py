@@ -176,11 +176,25 @@ def format_schedule_message(target_date: date_cls, week_type: str, entries: list
 
 async def _fetch_site_html(site_url: str) -> str | None:
     try:
-        response = await asyncio.to_thread(requests.get, site_url, timeout=15)
+        response = await asyncio.to_thread(
+            requests.get,
+            site_url,
+            timeout=(5, 10),  # (connect_timeout, read_timeout)
+            headers={
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                              "(KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                "Accept-Language": "ru-RU,ru;q=0.9,en;q=0.8",
+            },
+        )
         response.encoding = 'utf-8'
         if response.status_code != 200:
+            logger.warning("Сайт замен вернул статус %s", response.status_code)
             return None
         return response.text
+    except requests.exceptions.Timeout:
+        logger.warning("Таймаут при загрузке сайта замен (10с)")
+        return None
     except Exception:
         logger.exception("Не удалось загрузить сайт с заменами")
         return None
@@ -202,14 +216,39 @@ async def get_schedule_for_display() -> tuple[str, bool]:
     Возвращает (текст_сообщения, успех)."""
     shift = await asyncio.to_thread(db.get_current_shift)
     site_url = get_site_url(shift)
+    repl_notes = await asyncio.to_thread(db.get_active_replacement_notes)
 
     html_text = await _fetch_site_html(site_url)
     if not html_text:
-        return "Не удалось загрузить страницу с заменами. Попробуйте позже.", False
+        # Сайт недоступен — пробуем показать последний кэшированный результат
+        last_date_str = await asyncio.to_thread(db.get_setting, "last_schedule_date")
+        if last_date_str:
+            try:
+                from datetime import datetime as _dt
+                last_date = _dt.strptime(last_date_str, "%Y-%m-%d").date()
+                cached = await asyncio.to_thread(db.get_cached_schedule, last_date)
+                if cached:
+                    entries = [{
+                        "pair_num": row["pair_num"], "subject": row["subject"],
+                        "teacher": row.get("teacher", ""), "room": row.get("room", ""),
+                        "is_replaced": row.get("is_replaced", False),
+                    } for row in cached]
+                    week_type_cached = cached[0].get("week_type", "")
+                    return format_schedule_message(
+                        last_date, week_type_cached, entries, site_url,
+                        note="⚠️ Сайт замен недоступен. Показано последнее сохранённое расписание.",
+                        replacement_notes=repl_notes,
+                    ), True
+            except Exception:
+                logger.exception("Ошибка при загрузке кэша расписания")
+        return "⚠️ Сайт замен недоступен. Попробуйте позже.", False
 
     file_date, week_type = extract_metadata_from_html(html_text)
     if not file_date or not week_type:
         return "Не удалось определить дату или тип недели на сайте.", False
+
+    # Сохраняем дату последнего успешного расписания для fallback
+    await asyncio.to_thread(db.set_setting, "last_schedule_date", file_date.strftime("%Y-%m-%d"))
 
     weekday_name = WEEKDAYS_RU[file_date.weekday()]
     if weekday_name == "воскресенье":
@@ -219,7 +258,6 @@ async def get_schedule_for_display() -> tuple[str, bool]:
     day_diff = (file_date - today).days
 
     ph_note = await asyncio.to_thread(_pre_holiday_note, file_date, today)
-    repl_notes = await asyncio.to_thread(db.get_active_replacement_notes)
 
     # 1. Проверяем кэш
     cached = await asyncio.to_thread(db.get_cached_schedule, file_date)

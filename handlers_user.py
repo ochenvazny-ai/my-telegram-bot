@@ -94,9 +94,40 @@ async def main_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
 async def show_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    await query.edit_message_text("Загружаю расписание...")
+    # Отправляем расписание новым сообщением — оно останется в чате
+    loading_msg = await context.bot.send_message(
+        chat_id=update.effective_chat.id,
+        text="⏳ Загружаю расписание...",
+    )
     text, ok = await sched.get_schedule_for_display()
-    await query.edit_message_text(text, parse_mode='HTML', reply_markup=kb.back_button())
+    try:
+        await context.bot.edit_message_text(
+            chat_id=loading_msg.chat_id,
+            message_id=loading_msg.message_id,
+            text=text,
+            parse_mode='HTML',
+            reply_markup=kb.back_button("back_to_menu_new"),
+        )
+    except Exception:
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text=text,
+            parse_mode='HTML',
+            reply_markup=kb.back_button("back_to_menu_new"),
+        )
+
+
+async def back_to_menu_new(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Отправляет главное меню новым сообщением, не затирая предыдущее."""
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+    admin = await asyncio.to_thread(db.is_admin, user_id)
+    await context.bot.send_message(
+        chat_id=update.effective_chat.id,
+        text="Главное меню:",
+        reply_markup=kb.main_menu_kb(admin),
+    )
 
 
 async def show_hw(update: Update, context: ContextTypes.DEFAULT_TYPE):

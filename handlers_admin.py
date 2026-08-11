@@ -520,15 +520,82 @@ async def edit_schedule_menu(update: Update, context: ContextTypes.DEFAULT_TYPE)
     await query.edit_message_text("Изменение расписания:", reply_markup=kb.schedule_edit_menu_kb())
 
 
+def generate_template_xlsx() -> bytes:
+    """Создаёт шаблон .xlsx с предзаполненной структурой для заполнения админом."""
+    import openpyxl
+    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Расписание"
+
+    headers = ["Тип недели", "День", "Номер пары", "Предмет", "Преподаватель", "Кабинет"]
+    header_font = Font(bold=True, size=11)
+    header_fill = PatternFill(start_color="D9E1F2", end_color="D9E1F2", fill_type="solid")
+    thin_border = Border(
+        left=Side(style="thin"), right=Side(style="thin"),
+        top=Side(style="thin"), bottom=Side(style="thin"),
+    )
+
+    for col, header in enumerate(headers, start=1):
+        cell = ws.cell(row=1, column=col, value=header)
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = Alignment(horizontal="center")
+        cell.border = thin_border
+
+    row = 2
+    for week_type in ("Числитель", "Знаменатель"):
+        for day_idx, day_name in enumerate(WEEKDAYS_RU):
+            day_capitalized = day_name.capitalize()
+            for pair_num in range(7):
+                ws.cell(row=row, column=1, value=week_type).border = thin_border
+                ws.cell(row=row, column=2, value=day_capitalized).border = thin_border
+                ws.cell(row=row, column=3, value=pair_num).border = thin_border
+                ws.cell(row=row, column=4, value="").border = thin_border
+                ws.cell(row=row, column=5, value="").border = thin_border
+                ws.cell(row=row, column=6, value="").border = thin_border
+                row += 1
+
+    ws.column_dimensions["A"].width = 14
+    ws.column_dimensions["B"].width = 16
+    ws.column_dimensions["C"].width = 12
+    ws.column_dimensions["D"].width = 30
+    ws.column_dimensions["E"].width = 25
+    ws.column_dimensions["F"].width = 12
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    return buf.getvalue()
+
+
 async def sched_upload_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     if not await _require_admin(update):
         return ConversationHandler.END
+    # Отправляем шаблон-файл, который нужно заполнить
+    try:
+        template_bytes = await asyncio.to_thread(generate_template_xlsx)
+        await context.bot.send_document(
+            chat_id=update.effective_chat.id,
+            document=io.BytesIO(template_bytes),
+            filename="шаблон_расписания.xlsx",
+            caption=(
+                "📋 Шаблон расписания.\n\n"
+                "1. Скачайте файл\n"
+                "2. Заполните столбцы «Предмет», «Преподаватель», «Кабинет»\n"
+                "3. Удалите лишние строки с пустым «Предмет»\n"
+                "4. Пришлите заполненный файл обратно"
+            ),
+        )
+    except Exception:
+        logger.exception("Не удалось создать шаблон")
     await query.edit_message_text(
-        "📤 Пришлите файл .xlsx с заголовком в первой строке (порядок колонок не важен):\n\n"
-        "Тип недели | День | Номер пары | Предмет | Преподаватель | Кабинет\n\n"
-        "Тип недели: «Числитель» или «Знаменатель».\n"
+        "📤 Ожидание файла .xlsx.\n\n"
+        "Заполните шаблон выше и пришлите обратно.\n"
+        "Тип недели: Числитель или Знаменатель.\n"
         "День: понедельник…суббота.",
         reply_markup=kb.cancel_button(),
     )

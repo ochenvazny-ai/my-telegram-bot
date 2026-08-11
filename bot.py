@@ -155,6 +155,7 @@ def main():
 
     # Главное меню / пользовательские разделы
     application.add_handler(CallbackQueryHandler(hu.main_menu_callback, pattern="^main_menu$"))
+    application.add_handler(CallbackQueryHandler(hu.back_to_menu_new, pattern="^back_to_menu_new$"))
     application.add_handler(CallbackQueryHandler(hu.show_schedule, pattern="^menu_zam$"))
     application.add_handler(CallbackQueryHandler(hu.show_hw, pattern="^menu_hw$"))
     application.add_handler(CallbackQueryHandler(hu.show_announcements, pattern="^menu_ann$"))
