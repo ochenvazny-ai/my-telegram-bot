@@ -1,4 +1,5 @@
 import re
+import html
 import logging
 import asyncio
 from datetime import datetime, date as date_cls, timedelta
@@ -159,12 +160,17 @@ def format_schedule_message(target_date: date_cls, week_type: str, entries: list
             emoji = NUMBER_EMOJIS[idx] if 0 <= idx <= 9 else f"{idx}️⃣"
         except (ValueError, TypeError):
             emoji = "🔹"
-        teacher_part = f" ({e['teacher']})" if e.get("teacher") else ""
+        # Экранируем HTML-спецсимволы в данных с сайта колледжа
+        subject = html.escape(str(e['subject']))
+        teacher = html.escape(str(e.get('teacher', '')))
+        room = html.escape(str(e.get('room', '?')))
+        teacher_part = f" ({teacher})" if teacher else ""
         replaced_tag = " [ЗАМЕНА]" if e.get("is_replaced") else ""
-        text += f"🔹 {emoji} {e['subject']}{teacher_part}{replaced_tag} | {e.get('room', '?')}\n"
+        text += f"🔹 {emoji} {subject}{teacher_part}{replaced_tag} | {room}\n"
     text += f"\n🔗 <a href='{site_url}'>Проверить замены на сайте</a>"
     if replacement_notes:
-        text += "\n\n📝 " + "\n📝 ".join(replacement_notes)
+        escaped_notes = [html.escape(n) for n in replacement_notes]
+        text += "\n\n📝 " + "\n📝 ".join(escaped_notes)
     return text
 
 

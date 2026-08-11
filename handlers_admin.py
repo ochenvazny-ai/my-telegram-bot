@@ -760,7 +760,6 @@ async def sched_new_pair(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def sched_delete_pair(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer()
     _, week_type, day_idx, pair_num = query.data.split("_")
     await asyncio.to_thread(db.delete_pair, week_type, int(day_idx), int(pair_num))
     await query.answer("Пара удалена", show_alert=True)

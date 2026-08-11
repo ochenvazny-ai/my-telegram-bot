@@ -1,6 +1,6 @@
 import logging
 from contextlib import contextmanager
-from datetime import date as date_cls
+from datetime import date as date_cls, timedelta
 import psycopg2
 from psycopg2 import pool
 from psycopg2.extras import RealDictCursor
@@ -15,6 +15,7 @@ _pool = psycopg2.pool.ThreadedConnectionPool(minconn=1, maxconn=10, dsn=DATABASE
 @contextmanager
 def get_cursor(commit=False):
     conn = _pool.getconn()
+    cur = None
     try:
         cur = conn.cursor(cursor_factory=RealDictCursor)
         yield cur
@@ -24,8 +25,17 @@ def get_cursor(commit=False):
         conn.rollback()
         raise
     finally:
-        cur.close()
+        if cur is not None:
+            cur.close()
         _pool.putconn(conn)
+
+
+def close_pool():
+    """Закрывает все соединения в пуле. Вызывать при остановке бота."""
+    try:
+        _pool.closeall()
+    except Exception:
+        logger.exception("Ошибка при закрытии пула соединений")
 
 
 # ---------- USERS ----------
@@ -372,6 +382,22 @@ def save_schedule_cache(target_date: date_cls, week_type: str, day: str, entries
     except Exception:
         logger.exception("save_schedule_cache failed")
         return False
+
+
+def cleanup_old_schedule_cache(days: int = 30) -> int:
+    """Удаляет записи кэша расписания старше указанного количества дней.
+    Возвращает количество удалённых записей."""
+    try:
+        cutoff = date_cls.today() - timedelta(days=days)
+        with get_cursor(commit=True) as cur:
+            cur.execute("DELETE FROM schedule_history WHERE date < %s RETURNING id;", (cutoff,))
+            deleted = cur.rowcount
+        if deleted:
+            logger.info("Очищено %d старых записей кэша расписания (старше %d дней)", deleted, days)
+        return deleted
+    except Exception:
+        logger.exception("cleanup_old_schedule_cache failed")
+        return 0
 
 
 # ---------- SETTINGS ----------
