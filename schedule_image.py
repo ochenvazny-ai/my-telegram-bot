@@ -1,444 +1,356 @@
-"""Генерация изображений расписания (вертикальная таблица) для Telegram-бота.
-
-Лейаут:
-  * Одиночный тип недели — 6 дневных секций, расположенных друг под другом.
-    Внутри каждой секции: горизонтальная таблица с колонками
-    [№ пары | Предмет | Преподаватель | Кабинет], пары идут сверху вниз (0..6).
-  * Сравнение Числитель/Знаменатель — те же вертикальные секции, но в каждой
-    секции две группы колонок рядом: Числитель и Знаменатель. Отличающиеся
-    ячейки Знаменателя подсвечиваются оранжевым (COLOR_DIFF).
-
-Публичные функции (вызываются из handlers_user.py через asyncio.to_thread):
-    render_schedule_image(week_type: str) -> bytes
-    render_comparison_image() -> bytes
-"""
-
 import io
 import os
 import logging
-
 from PIL import Image, ImageDraw, ImageFont
 
 import database as db
+from config import WEEKDAYS_RU
 
 logger = logging.getLogger(__name__)
 
+# ---------- Геометрия ----------
+MARGIN = 14
+TITLE_H = 34
+DAY_BANNER_H = 30
+HEADER_H = 26
+ROW_MIN_H = 30
+LINE_H = 15
+PAD_V = 5
+SPLIT_GAP = 4
 
-# --------------------------------------------------------------------------- #
-#  Константы оформления
-# --------------------------------------------------------------------------- #
-COLOR_BG = (255, 255, 255)          # фон изображения
-COLOR_GRID = (200, 200, 200)         # линии сетки
-COLOR_TEXT = (33, 37, 41)           # основной текст
-COLOR_HEADER_BG = (52, 73, 94)      # фон шапки дня
-COLOR_HEADER_TEXT = (255, 255, 255) # текст шапки дня
-COLOR_COLHDR_BG = (236, 240, 241)   # фон заголовков колонок
-COLOR_DIFF = (230, 126, 34)         # подсветка отличий (знаменатель)
-COLOR_DIFF_TEXT = (255, 255, 255)   # текст на оранжевой подсветке
-COLOR_ALT_ROW = (248, 249, 250)     # альтернативная строка (зебра)
-COLOR_EMPTY = (245, 245, 245)       # пустая ячейка
+COL_W = {"num": 34, "subject": 190, "teacher": 160, "room": 80}
+TABLE_W = sum(COL_W.values())
+IMG_W = TABLE_W + MARGIN * 2
 
-# Дни недели (понедельник .. суббота, индексы 0..5 — как weekday() в datetime)
-WEEKDAYS_RU = ["понедельник", "вторник", "среда", "четверг", "пятница", "суббота"]
-
-# Размеры ячеек
-MARGIN = 10
-COL_PAIR = 50
-COL_SUBJECT = 200
-COL_TEACHER = 150
-COL_ROOM = 80
-CELL_HEIGHT = 60
-HEADER_HEIGHT = 35          # высота полосы с названием дня
-COL_HEADER_HEIGHT = 30      # высота строки с названиями колонок
-TITLE_HEIGHT = 50           # высота заголовка изображения
-SECTION_GAP = 8             # отступ между дневными секциями
-MAX_PAIR = 6                # пары 0..6
-
-WEEK_TYPES = ("Числитель", "Знаменатель")
-
-# --------------------------------------------------------------------------- #
-#  Шрифты (DejaVuSans)
-# --------------------------------------------------------------------------- #
-_REGULAR_CANDIDATES = [
-    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-    "/usr/share/fonts/dejavu/DejaVuSans.ttf",
-    "/usr/share/fonts/TTF/dejavu/DejaVuSans.ttf",
-]
-_BOLD_CANDIDATES = [
-    "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-    "/usr/share/fonts/dejavu/DejaVuSans-Bold.ttf",
-    "/usr/share/fonts/TTF/dejavu/DejaVuSans-Bold.ttf",
-]
+# ---------- Цвета ----------
+COLOR_BG = (255, 255, 255)
+COLOR_GRID = (190, 190, 190)
+COLOR_DAY_BG = (44, 62, 80)
+COLOR_DAY_TEXT = (255, 255, 255)
+COLOR_HEADER_BG = (222, 226, 230)
+COLOR_HEADER_TEXT = (20, 20, 20)
+COLOR_ROW_EVEN = (255, 255, 255)
+COLOR_ROW_ODD = (245, 246, 247)
+COLOR_TEXT = (20, 20, 20)
+COLOR_ORANGE = (211, 84, 0)
+COLOR_TITLE = (20, 20, 20)
 
 
-def _find_font(candidates):
-    """Ищет файл шрифта по списку путей, затем — в данных matplotlib."""
+# ---------- Шрифты (гарантированный источник — matplotlib, см. предыдущий фикс) ----------
+def _find_cyrillic_font_path(bold: bool) -> str | None:
+    candidates = [
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf" if bold else
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        "/usr/share/fonts/dejavu/DejaVuSans-Bold.ttf" if bold else
+        "/usr/share/fonts/dejavu/DejaVuSans.ttf",
+    ]
     for path in candidates:
         if os.path.exists(path):
             return path
     try:
         import matplotlib
-        mpl_dir = os.path.join(matplotlib.get_data_path(), "fonts", "ttf")
-        for path in candidates:
-            full = os.path.join(mpl_dir, os.path.basename(path))
-            if os.path.exists(full):
-                return full
+        mpl_font = os.path.join(
+            matplotlib.get_data_path(), "fonts", "ttf",
+            "DejaVuSans-Bold.ttf" if bold else "DejaVuSans.ttf",
+        )
+        if os.path.exists(mpl_font):
+            return mpl_font
     except Exception:
-        logger.debug("matplotlib недоступен для поиска шрифтов")
+        logger.exception("matplotlib недоступен для получения шрифта с кириллицей")
     return None
 
 
-_REGULAR_PATH = _find_font(_REGULAR_CANDIDATES)
-_BOLD_PATH = _find_font(_BOLD_CANDIDATES)
+_FONT_PATH_REGULAR = _find_cyrillic_font_path(bold=False)
+_FONT_PATH_BOLD = _find_cyrillic_font_path(bold=True)
+
+if not _FONT_PATH_REGULAR:
+    logger.error("Не найден TTF-шрифт с поддержкой кириллицы — текст на картинках будет нечитаем.")
 
 
-def _load_font(size: int, bold: bool = False) -> ImageFont.FreeTypeFont:
-    path = _BOLD_PATH if bold else _REGULAR_PATH
-    try:
-        if path:
-            return ImageFont.truetype(path, size)
-    except Exception:
-        logger.exception("Не удалось загрузить шрифт %s", path)
+def _font(size=12):
+    if _FONT_PATH_REGULAR:
+        try:
+            return ImageFont.truetype(_FONT_PATH_REGULAR, size)
+        except Exception:
+            logger.exception("Не удалось загрузить шрифт")
     return ImageFont.load_default()
 
 
-# Кэшированные шрифты
-_FONT_TITLE = _load_font(24, bold=True)
-_FONT_DAY = _load_font(17, bold=True)
-_FONT_COLHDR = _load_font(13, bold=True)
-_FONT_BODY = _load_font(13, bold=False)
+def _font_bold(size=13):
+    path = _FONT_PATH_BOLD or _FONT_PATH_REGULAR
+    if path:
+        try:
+            return ImageFont.truetype(path, size)
+        except Exception:
+            logger.exception("Не удалось загрузить жирный шрифт")
+    return ImageFont.load_default()
 
 
-# --------------------------------------------------------------------------- #
-#  Низкоуровневые помощники отрисовки
-# --------------------------------------------------------------------------- #
-def _wrap_text(text, font, max_width):
-    """Перенос текста по словам (с посимвольным дроблением слишком длинных слов)."""
-    text = "" if text is None else str(text).strip()
+FONT_TITLE = _font_bold(18)
+FONT_DAY = _font_bold(14)
+FONT_HEADER = _font_bold(12)
+FONT_CELL = _font(12)
+FONT_CELL_ORANGE = _font(12)
+
+
+def _wrap_lines(draw, text, font, max_width):
     if not text:
-        return []
-    words = text.split()
-    if not words:
-        # одни пробелы/переносы — рисуем как есть
-        return [text]
-    raw_lines = []
-    current = words[0]
-    for word in words[1:]:
-        candidate = current + " " + word
-        if font.getlength(candidate) <= max_width:
-            current = candidate
+        return [""]
+    words = str(text).split()
+    lines, cur = [], ""
+    for w in words:
+        trial = (cur + " " + w).strip()
+        if draw.textlength(trial, font=font) <= max_width:
+            cur = trial
         else:
-            raw_lines.append(current)
-            current = word
-    raw_lines.append(current)
+            if cur:
+                lines.append(cur)
+            if draw.textlength(w, font=font) > max_width:
+                chunk = ""
+                for ch in w:
+                    if draw.textlength(chunk + ch, font=font) <= max_width:
+                        chunk += ch
+                    else:
+                        lines.append(chunk)
+                        chunk = ch
+                cur = chunk
+            else:
+                cur = w
+    if cur:
+        lines.append(cur)
+    return lines or [""]
 
-    # Дробим слишком длинные слова посимвольно
-    final_lines = []
-    for line in raw_lines:
-        if font.getlength(line) <= max_width:
-            final_lines.append(line)
+
+def _draw_lines_centered(draw, lines, font, x, y_top, height, width, color, align_center_h=False):
+    total_h = len(lines) * LINE_H
+    y = y_top + max(0, (height - total_h) // 2)
+    for line in lines:
+        if align_center_h:
+            w = draw.textlength(line, font=font)
+            tx = x + max(0, (width - w) // 2)
+        else:
+            tx = x
+        draw.text((tx, y), line, fill=color, font=font)
+        y += LINE_H
+
+
+def _get_day_data(week_type: str, day: int) -> dict:
+    """{pair_num(int): {subject, teacher, room}} только заполненные пары."""
+    return db.get_base_schedule(week_type, day)
+
+
+# ==================== ОДИНОЧНОЕ РАСПИСАНИЕ (Числитель / Знаменатель) ====================
+def render_schedule_image(week_type: str) -> bytes:
+    measure_img = Image.new("RGB", (10, 10))
+    md = ImageDraw.Draw(measure_img)
+
+    days_blocks = []  # (day_idx, [(pair_num, subject, teacher, room, row_h), ...])
+    for day in range(6):
+        pairs = _get_day_data(week_type, day)
+        if not pairs:
             continue
-        chunk = ""
-        for ch in line:
-            if chunk and font.getlength(chunk + ch) > max_width:
-                final_lines.append(chunk)
-                chunk = ch
-            else:
-                chunk += ch
-        if chunk:
-            final_lines.append(chunk)
-    return final_lines
+        rows = []
+        for pair_num in sorted(pairs.keys()):
+            info = pairs[pair_num]
+            lines_s = _wrap_lines(md, info["subject"], FONT_CELL, COL_W["subject"] - 10)
+            lines_t = _wrap_lines(md, info["teacher"], FONT_CELL, COL_W["teacher"] - 10)
+            lines_r = _wrap_lines(md, info["room"], FONT_CELL, COL_W["room"] - 10)
+            max_lines = max(len(lines_s), len(lines_t), len(lines_r), 1)
+            row_h = max(ROW_MIN_H, max_lines * LINE_H + 2 * PAD_V)
+            rows.append((pair_num, lines_s, lines_t, lines_r, row_h))
+        days_blocks.append((day, rows))
 
+    if not days_blocks:
+        return _render_empty_image(f"Расписание — {week_type}", "Нет данных для отображения")
 
-def _line_height(font):
-    return font.getbbox("Ag")[3] + 4
+    total_h = MARGIN + TITLE_H
+    for day, rows in days_blocks:
+        total_h += DAY_BANNER_H + HEADER_H + sum(r[4] for r in rows)
+    total_h += MARGIN
 
-
-def _draw_cell(draw, x, y, w, h, text, font, fill=None, text_color=COLOR_TEXT,
-               align="center", wrap=True, border=True):
-    """Рисует одну ячейку: заливка, рамка, текст (с переносом и центрированием)."""
-    if fill is not None:
-        draw.rectangle([x, y, x + w - 1, y + h - 1], fill=fill)
-    if border:
-        draw.rectangle([x, y, x + w - 1, y + h - 1], outline=COLOR_GRID)
-
-    display = "" if text is None else str(text).strip()
-    if not display:
-        return
-
-    max_w = w - 8
-    lines = _wrap_text(display, font, max_w) if wrap else [display]
-    lh = _line_height(font)
-    total = lh * len(lines)
-    start_y = y + max(2, (h - total) // 2)
-
-    for i, line in enumerate(lines):
-        ty = start_y + i * lh
-        if align == "center":
-            tx = x + (w - font.getlength(line)) // 2
-        elif align == "right":
-            tx = x + (w - font.getlength(line)) - 5
-        else:
-            tx = x + 5
-        draw.text((tx, ty), line, fill=text_color, font=font)
-
-
-def _draw_section_header(draw, x, y, w, title, subtitle=None):
-    """Полоса-заголовок дневной секции с названием дня."""
-    draw.rectangle([x, y, x + w - 1, y + HEADER_HEIGHT - 1], fill=COLOR_HEADER_BG)
-    # Название дня — слева, с отступом
-    label = title.capitalize()
-    if subtitle:
-        label = f"{label}   ·   {subtitle}"
-    tw = _FONT_DAY.getlength(label)
-    ty = y + (HEADER_HEIGHT - (_FONT_DAY.getbbox("Ag")[3] + 2)) // 2
-    draw.text((x + 10, ty), label, fill=COLOR_HEADER_TEXT, font=_FONT_DAY)
-    return HEADER_HEIGHT
-
-
-# --------------------------------------------------------------------------- #
-#  Доступ к данным
-# --------------------------------------------------------------------------- #
-def _pair_info(base, pair):
-    """Возвращает (subject, teacher, room) для пары из словаря базы."""
-    info = base.get(pair) or base.get(str(pair))
-    if not info:
-        return ("", "", "")
-    return (
-        str(info.get("subject", "") or ""),
-        str(info.get("teacher", "") or ""),
-        str(info.get("room", "") or ""),
-    )
-
-
-def _day_pairs(week_type, day_idx):
-    """Словарь {pair_number: (subject, teacher, room)} для пар 0..6."""
-    base = db.get_base_schedule(week_type, day_idx)
-    return {p: _pair_info(base, p) for p in range(0, MAX_PAIR + 1)}
-
-
-# --------------------------------------------------------------------------- #
-#  Одиночное расписание
-# --------------------------------------------------------------------------- #
-def _single_table_width():
-    return COL_PAIR + COL_SUBJECT + COL_TEACHER + COL_ROOM
-
-
-def _render_single(week_type: str) -> bytes:
-    table_w = _single_table_width()
-    img_w = 2 * MARGIN + table_w
-
-    # Собираем данные по всем дням
-    days = [(name, _day_pairs(week_type, idx)) for idx, name in enumerate(WEEKDAYS_RU)]
-
-    # Считаем высоту изображения
-    section_h = HEADER_HEIGHT + COL_HEADER_HEIGHT + (MAX_PAIR + 1) * CELL_HEIGHT
-    img_h = MARGIN + TITLE_HEIGHT + len(days) * section_h + (len(days) - 1) * SECTION_GAP + MARGIN
-
-    img = Image.new("RGB", (img_w, img_h), COLOR_BG)
+    img = Image.new("RGB", (IMG_W, total_h), COLOR_BG)
     draw = ImageDraw.Draw(img)
 
-    # Заголовок
-    _draw_title(draw, 0, MARGIN, img_w, TITLE_HEIGHT, f"Расписание — {week_type}")
+    title = f"Расписание — {week_type}"
+    tw = draw.textlength(title, font=FONT_TITLE)
+    draw.text(((IMG_W - tw) // 2, MARGIN), title, fill=COLOR_TITLE, font=FONT_TITLE)
 
-    y = MARGIN + TITLE_HEIGHT
-    for name, pairs in days:
-        _draw_single_section(draw, MARGIN, y, table_w, name, pairs)
-        y += section_h + SECTION_GAP
+    y = MARGIN + TITLE_H
+    x0 = MARGIN
+    col_x = {
+        "num": x0,
+        "subject": x0 + COL_W["num"],
+        "teacher": x0 + COL_W["num"] + COL_W["subject"],
+        "room": x0 + COL_W["num"] + COL_W["subject"] + COL_W["teacher"],
+    }
 
-    return _to_png(img)
+    for day, rows in days_blocks:
+        draw.rectangle([x0, y, x0 + TABLE_W, y + DAY_BANNER_H], fill=COLOR_DAY_BG)
+        day_title = WEEKDAYS_RU[day].capitalize()
+        dw = draw.textlength(day_title, font=FONT_DAY)
+        draw.text((x0 + (TABLE_W - dw) // 2, y + 6), day_title, fill=COLOR_DAY_TEXT, font=FONT_DAY)
+        y += DAY_BANNER_H
 
+        draw.rectangle([x0, y, x0 + TABLE_W, y + HEADER_H], fill=COLOR_HEADER_BG, outline=COLOR_GRID)
+        headers = [("№", "num"), ("Предмет", "subject"), ("Преподаватель", "teacher"), ("Кабинет", "room")]
+        for label, key in headers:
+            draw.text((col_x[key] + 6, y + 5), label, fill=COLOR_HEADER_TEXT, font=FONT_HEADER)
+        y += HEADER_H
 
-def _draw_single_section(draw, x, y, w, day_name, pairs):
-    """Рисует одну дневную секцию: шапка + колонки + 7 строк пар."""
-    _draw_section_header(draw, x, y, w, day_name)
-    y += HEADER_HEIGHT
+        for idx, (pair_num, lines_s, lines_t, lines_r, row_h) in enumerate(rows):
+            bg = COLOR_ROW_EVEN if idx % 2 == 0 else COLOR_ROW_ODD
+            draw.rectangle([x0, y, x0 + TABLE_W, y + row_h], fill=bg, outline=COLOR_GRID)
+            draw.text((col_x["num"] + 10, y + (row_h - LINE_H) // 2), str(pair_num),
+                       fill=COLOR_TEXT, font=FONT_CELL)
+            _draw_lines_centered(draw, lines_s, FONT_CELL, col_x["subject"] + 6, y, row_h,
+                                  COL_W["subject"] - 10, COLOR_TEXT)
+            _draw_lines_centered(draw, lines_t, FONT_CELL, col_x["teacher"] + 6, y, row_h,
+                                  COL_W["teacher"] - 10, COLOR_TEXT)
+            _draw_lines_centered(draw, lines_r, FONT_CELL, col_x["room"] + 6, y, row_h,
+                                  COL_W["room"] - 10, COLOR_TEXT)
+            y += row_h
 
-    # Заголовки колонок
-    col_x = [x, x + COL_PAIR, x + COL_PAIR + COL_SUBJECT,
-             x + COL_PAIR + COL_SUBJECT + COL_TEACHER]
-    col_w = [COL_PAIR, COL_SUBJECT, COL_TEACHER, COL_ROOM]
-    headers = ["№", "Предмет", "Преподаватель", "Кабинет"]
-    for cx, cw, head in zip(col_x, col_w, headers):
-        draw.rectangle([cx, y, cx + cw - 1, y + COL_HEADER_HEIGHT - 1],
-                       fill=COLOR_COLHDR_BG, outline=COLOR_GRID)
-        ty = y + (COL_HEADER_HEIGHT - (_FONT_COLHDR.getbbox("Ag")[3] + 2)) // 2
-        tx = cx + (cw - _FONT_COLHDR.getlength(head)) // 2
-        draw.text((tx, ty), head, fill=COLOR_TEXT, font=_FONT_COLHDR)
-    y += COL_HEADER_HEIGHT
-
-    # Строки пар (0..6)
-    for row_idx, pair_num in enumerate(range(0, MAX_PAIR + 1)):
-        subject, teacher, room = pairs.get(pair_num, ("", "", ""))
-        empty = not (subject or teacher or room)
-        row_fill = COLOR_ALT_ROW if row_idx % 2 else None
-
-        _draw_cell(draw, col_x[0], y, col_w[0], CELL_HEIGHT,
-                   str(pair_num), _FONT_BODY, fill=row_fill, align="center")
-        _draw_cell(draw, col_x[1], y, col_w[1], CELL_HEIGHT,
-                   subject or "—", _FONT_BODY, fill=row_fill, align="left")
-        _draw_cell(draw, col_x[2], y, col_w[2], CELL_HEIGHT,
-                   teacher or ("—" if empty else "—"), _FONT_BODY,
-                   fill=row_fill, align="left")
-        _draw_cell(draw, col_x[3], y, col_w[3], CELL_HEIGHT,
-                   room or "—", _FONT_BODY, fill=row_fill, align="center")
-        y += CELL_HEIGHT
-
-
-# --------------------------------------------------------------------------- #
-#  Сравнение Числитель / Знаменатель
-# --------------------------------------------------------------------------- #
-def _comparison_table_width():
-    half = COL_SUBJECT + COL_TEACHER + COL_ROOM
-    return COL_PAIR + half * 2
-
-
-def _render_comparison() -> bytes:
-    table_w = _comparison_table_width()
-    img_w = 2 * MARGIN + table_w
-
-    # Групповой заголовок + подзаголовок колонок -> две строки шапки
-    group_header_h = COL_HEADER_HEIGHT
-    sub_header_h = COL_HEADER_HEIGHT
-    section_h = HEADER_HEIGHT + group_header_h + sub_header_h + (MAX_PAIR + 1) * CELL_HEIGHT
-
-    days = [(name, _day_pairs("Числитель", idx), _day_pairs("Знаменатель", idx))
-            for idx, name in enumerate(WEEKDAYS_RU)]
-
-    img_h = MARGIN + TITLE_HEIGHT + len(days) * section_h + (len(days) - 1) * SECTION_GAP + MARGIN
-
-    img = Image.new("RGB", (img_w, img_h), COLOR_BG)
-    draw = ImageDraw.Draw(img)
-
-    _draw_title(draw, 0, MARGIN, img_w, TITLE_HEIGHT,
-                "Сравнение: Числитель / Знаменатель")
-
-    y = MARGIN + TITLE_HEIGHT
-    for name, num_pairs, den_pairs in days:
-        _draw_comparison_section(draw, MARGIN, y, table_w, name, num_pairs, den_pairs)
-        y += section_h + SECTION_GAP
-
-    return _to_png(img)
-
-
-def _draw_comparison_section(draw, x, y, w, day_name, num_pairs, den_pairs):
-    half_w = COL_SUBJECT + COL_TEACHER + COL_ROOM
-    # координаты колонок
-    col_x = [
-        x,                                              # №
-        x + COL_PAIR,                                   # num subject
-        x + COL_PAIR + COL_SUBJECT,                     # num teacher
-        x + COL_PAIR + COL_SUBJECT + COL_TEACHER,       # num room
-        x + COL_PAIR + half_w,                          # den subject
-        x + COL_PAIR + half_w + COL_SUBJECT,            # den teacher
-        x + COL_PAIR + half_w + COL_SUBJECT + COL_TEACHER,  # den room
-    ]
-    col_w = [COL_PAIR, COL_SUBJECT, COL_TEACHER, COL_ROOM,
-             COL_SUBJECT, COL_TEACHER, COL_ROOM]
-
-    # Шапка дня
-    _draw_section_header(draw, x, y, w, day_name)
-    y += HEADER_HEIGHT
-
-    # Групповая строка: № | Числитель | Знаменатель
-    group_header_h = COL_HEADER_HEIGHT
-    group_labels = [(col_x[0], col_w[0], "№"),
-                    (col_x[1], half_w, "Числитель"),
-                    (col_x[4], half_w, "Знаменатель")]
-    for cx, cw, label in group_labels:
-        draw.rectangle([cx, y, cx + cw - 1, y + group_header_h - 1],
-                       fill=COLOR_COLHDR_BG, outline=COLOR_GRID)
-        ty = y + (group_header_h - (_FONT_COLHDR.getbbox("Ag")[3] + 2)) // 2
-        tx = cx + (cw - _FONT_COLHDR.getlength(label)) // 2
-        draw.text((tx, ty), label, fill=COLOR_TEXT, font=_FONT_COLHDR)
-    y += group_header_h
-
-    # Подзаголовок колонок: Предмет/Преподаватель/Кабинет (дважды)
-    sub_header_h = COL_HEADER_HEIGHT
-    sub_labels = ["Предмет", "Преподаватель", "Кабинет", "Предмет", "Преподаватель", "Кабинет"]
-    for cx, cw, label in zip(col_x[1:], col_w[1:], sub_labels):
-        draw.rectangle([cx, y, cx + cw - 1, y + sub_header_h - 1],
-                       fill=COLOR_COLHDR_BG, outline=COLOR_GRID)
-        ty = y + (sub_header_h - (_FONT_COLHDR.getbbox("Ag")[3] + 2)) // 2
-        tx = cx + (cw - _FONT_COLHDR.getlength(label)) // 2
-        draw.text((tx, ty), label, fill=COLOR_TEXT, font=_FONT_COLHDR)
-    y += sub_header_h
-
-    # Строки пар (0..6)
-    for row_idx, pair_num in enumerate(range(0, MAX_PAIR + 1)):
-        num = num_pairs.get(pair_num, ("", "", ""))
-        den = den_pairs.get(pair_num, ("", "", ""))
-        row_fill = COLOR_ALT_ROW if row_idx % 2 else None
-
-        # Номер пары
-        _draw_cell(draw, col_x[0], y, col_w[0], CELL_HEIGHT,
-                   str(pair_num), _FONT_BODY, fill=row_fill, align="center")
-
-        # Числитель
-        num_values = [num[0], num[1], num[2]]
-        for j, val in enumerate(num_values):
-            text = val or "—"
-            _draw_cell(draw, col_x[1 + j], y, col_w[1 + j], CELL_HEIGHT,
-                       text, _FONT_BODY, fill=row_fill, align="left")
-
-        # Знаменатель (с подсветкой отличий)
-        differ = num != den
-        for j, val in enumerate(den):
-            text = val or "—"
-            if differ:
-                cell_fill = COLOR_DIFF
-                tcolor = COLOR_DIFF_TEXT
-            else:
-                cell_fill = row_fill
-                tcolor = COLOR_TEXT
-            _draw_cell(draw, col_x[4 + j], y, col_w[4 + j], CELL_HEIGHT,
-                       text, _FONT_BODY, fill=cell_fill, text_color=tcolor, align="left")
-        y += CELL_HEIGHT
-
-
-# --------------------------------------------------------------------------- #
-#  Общие помощники
-# --------------------------------------------------------------------------- #
-def _draw_title(draw, x, y, w, h, title):
-    tw = _FONT_TITLE.getlength(title)
-    ty = y + (h - (_FONT_TITLE.getbbox("Ag")[3] + 2)) // 2
-    tx = x + (w - tw) // 2
-    draw.text((tx, ty), title, fill=COLOR_TEXT, font=_FONT_TITLE)
-
-
-def _to_png(img: Image.Image) -> bytes:
     buf = io.BytesIO()
-    img.save(buf, format="PNG", optimize=True)
+    img.save(buf, format="PNG")
+    buf.seek(0)
     return buf.getvalue()
 
 
-# --------------------------------------------------------------------------- #
-#  Публичный API
-# --------------------------------------------------------------------------- #
-def render_schedule_image(week_type: str) -> bytes:
-    """PNG-изображение расписания для одного типа недели (вертикальный лейаут)."""
-    try:
-        if week_type not in WEEK_TYPES:
-            logger.warning("Неизвестный тип недели: %s", week_type)
-            week_type = WEEK_TYPES[0]
-        return _render_single(week_type)
-    except Exception:
-        logger.exception("render_schedule_image failed for %s", week_type)
-        return _error_image(f"Ошибка: {week_type}")
+def _render_empty_image(title: str, message: str) -> bytes:
+    img = Image.new("RGB", (IMG_W, 120), COLOR_BG)
+    draw = ImageDraw.Draw(img)
+    tw = draw.textlength(title, font=FONT_TITLE)
+    draw.text(((IMG_W - tw) // 2, 20), title, fill=COLOR_TITLE, font=FONT_TITLE)
+    mw = draw.textlength(message, font=FONT_CELL)
+    draw.text(((IMG_W - mw) // 2, 60), message, fill=(120, 120, 120), font=FONT_CELL)
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    buf.seek(0)
+    return buf.getvalue()
+
+
+# ==================== СРАВНЕНИЕ (Числитель vs Знаменатель) ====================
+def _cmp_field(md, num_val: str, den_val: str, max_width: int):
+    """Возвращает (equal, lines_num, lines_den, content_height)."""
+    equal = (num_val or "") == (den_val or "")
+    if equal:
+        lines = _wrap_lines(md, num_val, FONT_CELL, max_width)
+        return True, lines, lines, len(lines) * LINE_H
+    lines_num = _wrap_lines(md, num_val, FONT_CELL, max_width) if num_val else [""]
+    lines_den = _wrap_lines(md, den_val, FONT_CELL_ORANGE, max_width) if den_val else [""]
+    h = len(lines_num) * LINE_H + SPLIT_GAP + len(lines_den) * LINE_H
+    return False, lines_num, lines_den, h
 
 
 def render_comparison_image() -> bytes:
-    """PNG-изображение сравнения Числитель/Знаменатель (вертикальный лейаут)."""
-    try:
-        return _render_comparison()
-    except Exception:
-        logger.exception("render_comparison_image failed")
-        return _error_image("Ошибка сравнения")
+    measure_img = Image.new("RGB", (10, 10))
+    md = ImageDraw.Draw(measure_img)
 
+    days_blocks = []
+    for day in range(6):
+        pairs_num = _get_day_data("Числитель", day)
+        pairs_den = _get_day_data("Знаменатель", day)
+        all_pairs = sorted(set(pairs_num.keys()) | set(pairs_den.keys()))
+        if not all_pairs:
+            continue
 
-def _error_image(message: str) -> bytes:
-    """Простейшее изображение-заглушка при ошибке генерации."""
-    img = Image.new("RGB", (500, 80), COLOR_BG)
+        rows = []
+        for pair_num in all_pairs:
+            e_num = pairs_num.get(pair_num, {"subject": "", "teacher": "", "room": ""})
+            e_den = pairs_den.get(pair_num, {"subject": "", "teacher": "", "room": ""})
+
+            eq_s, ls_num, ls_den, h_s = _cmp_field(md, e_num["subject"], e_den["subject"], COL_W["subject"] - 10)
+            eq_t, lt_num, lt_den, h_t = _cmp_field(md, e_num["teacher"], e_den["teacher"], COL_W["teacher"] - 10)
+            eq_r, lr_num, lr_den, h_r = _cmp_field(md, e_num["room"], e_den["room"], COL_W["room"] - 10)
+
+            row_h = max(ROW_MIN_H, h_s + 2 * PAD_V, h_t + 2 * PAD_V, h_r + 2 * PAD_V)
+            rows.append({
+                "pair_num": pair_num, "row_h": row_h,
+                "subject": (eq_s, ls_num, ls_den), "teacher": (eq_t, lt_num, lt_den), "room": (eq_r, lr_num, lr_den),
+            })
+        days_blocks.append((day, rows))
+
+    if not days_blocks:
+        return _render_empty_image("Расписание — Сравнение", "Нет данных для отображения")
+
+    total_h = MARGIN + TITLE_H * 2
+    for day, rows in days_blocks:
+        total_h += DAY_BANNER_H + HEADER_H + sum(r["row_h"] for r in rows)
+    total_h += MARGIN
+
+    img = Image.new("RGB", (IMG_W, total_h), COLOR_BG)
     draw = ImageDraw.Draw(img)
-    draw.text((20, 30), message, fill=COLOR_DIFF, font=_FONT_BODY)
-    return _to_png(img)
+
+    title = "Расписание — Сравнение"
+    subtitle = "(различия по знаменателю — оранжевым)"
+    tw = draw.textlength(title, font=FONT_TITLE)
+    draw.text(((IMG_W - tw) // 2, MARGIN), title, fill=COLOR_TITLE, font=FONT_TITLE)
+    sw = draw.textlength(subtitle, font=FONT_CELL)
+    draw.text(((IMG_W - sw) // 2, MARGIN + 22), subtitle, fill=COLOR_ORANGE, font=FONT_CELL)
+
+    y = MARGIN + TITLE_H * 2
+    x0 = MARGIN
+    col_x = {
+        "num": x0,
+        "subject": x0 + COL_W["num"],
+        "teacher": x0 + COL_W["num"] + COL_W["subject"],
+        "room": x0 + COL_W["num"] + COL_W["subject"] + COL_W["teacher"],
+    }
+
+    def draw_field(col_key, eq, lines_num, lines_den, row_top, row_h):
+        cx = col_x[col_key] + 6
+        cw = COL_W[col_key] - 10
+        if eq:
+            _draw_lines_centered(draw, lines_num, FONT_CELL, cx, row_top, row_h, cw, COLOR_TEXT)
+            return
+        block_h = len(lines_num) * LINE_H + SPLIT_GAP + len(lines_den) * LINE_H
+        y_start = row_top + max(0, (row_h - block_h) // 2)
+        yy = y_start
+        for line in lines_num:
+            draw.text((cx, yy), line, fill=COLOR_TEXT, font=FONT_CELL)
+            yy += LINE_H
+        divider_y = yy + SPLIT_GAP // 2
+        yy += SPLIT_GAP
+        den_top = yy
+        den_h = len(lines_den) * LINE_H
+        # тонкая оранжевая рамка вокруг значения знаменателя
+        draw.rectangle(
+            [col_x[col_key] + 2, den_top - 2, col_x[col_key] + COL_W[col_key] - 2, den_top + den_h + 2],
+            outline=COLOR_ORANGE, width=1,
+        )
+        for line in lines_den:
+            draw.text((cx, yy), line, fill=COLOR_ORANGE, font=FONT_CELL_ORANGE)
+            yy += LINE_H
+
+    for day, rows in days_blocks:
+        draw.rectangle([x0, y, x0 + TABLE_W, y + DAY_BANNER_H], fill=COLOR_DAY_BG)
+        day_title = WEEKDAYS_RU[day].capitalize()
+        dw = draw.textlength(day_title, font=FONT_DAY)
+        draw.text((x0 + (TABLE_W - dw) // 2, y + 6), day_title, fill=COLOR_DAY_TEXT, font=FONT_DAY)
+        y += DAY_BANNER_H
+
+        draw.rectangle([x0, y, x0 + TABLE_W, y + HEADER_H], fill=COLOR_HEADER_BG, outline=COLOR_GRID)
+        headers = [("№", "num"), ("Предмет", "subject"), ("Преподаватель", "teacher"), ("Кабинет", "room")]
+        for label, key in headers:
+            draw.text((col_x[key] + 6, y + 5), label, fill=COLOR_HEADER_TEXT, font=FONT_HEADER)
+        y += HEADER_H
+
+        for idx, row in enumerate(rows):
+            row_h = row["row_h"]
+            bg = COLOR_ROW_EVEN if idx % 2 == 0 else COLOR_ROW_ODD
+            draw.rectangle([x0, y, x0 + TABLE_W, y + row_h], fill=bg, outline=COLOR_GRID)
+            draw.text((col_x["num"] + 10, y + (row_h - LINE_H) // 2), str(row["pair_num"]),
+                       fill=COLOR_TEXT, font=FONT_CELL)
+
+            eq_s, ls_num, ls_den = row["subject"]
+            eq_t, lt_num, lt_den = row["teacher"]
+            eq_r, lr_num, lr_den = row["room"]
+            draw_field("subject", eq_s, ls_num, ls_den, y, row_h)
+            draw_field("teacher", eq_t, lt_num, lt_den, y, row_h)
+            draw_field("room", eq_r, lr_num, lr_den, y, row_h)
+            y += row_h
+
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    buf.seek(0)
+    return buf.getvalue()

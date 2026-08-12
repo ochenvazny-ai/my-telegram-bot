@@ -1,5 +1,6 @@
 import re
 import io
+import os
 import asyncio
 import logging
 from datetime import datetime, timedelta
@@ -520,173 +521,95 @@ async def edit_schedule_menu(update: Update, context: ContextTypes.DEFAULT_TYPE)
     await query.edit_message_text("Изменение расписания:", reply_markup=kb.schedule_edit_menu_kb())
 
 
-def generate_template_xlsx() -> bytes:
-    """Создаёт шаблон .xlsx с предзаполненной структурой для заполнения админом."""
-    import openpyxl
-    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
-
-    wb = openpyxl.Workbook()
-    ws = wb.active
-    ws.title = "Расписание"
-
-    headers = ["Тип недели", "День", "Номер пары", "Предмет", "Преподаватель", "Кабинет"]
-    header_font = Font(bold=True, size=11)
-    header_fill = PatternFill(start_color="D9E1F2", end_color="D9E1F2", fill_type="solid")
-    thin_border = Border(
-        left=Side(style="thin"), right=Side(style="thin"),
-        top=Side(style="thin"), bottom=Side(style="thin"),
-    )
-
-    for col, header in enumerate(headers, start=1):
-        cell = ws.cell(row=1, column=col, value=header)
-        cell.font = header_font
-        cell.fill = header_fill
-        cell.alignment = Alignment(horizontal="center")
-        cell.border = thin_border
-
-    row = 2
-    for week_type in ("Числитель", "Знаменатель"):
-        for day_idx, day_name in enumerate(WEEKDAYS_RU):
-            day_capitalized = day_name.capitalize()
-            for pair_num in range(7):
-                ws.cell(row=row, column=1, value=week_type).border = thin_border
-                ws.cell(row=row, column=2, value=day_capitalized).border = thin_border
-                ws.cell(row=row, column=3, value=pair_num).border = thin_border
-                ws.cell(row=row, column=4, value="").border = thin_border
-                ws.cell(row=row, column=5, value="").border = thin_border
-                ws.cell(row=row, column=6, value="").border = thin_border
-                row += 1
-
-    ws.column_dimensions["A"].width = 14
-    ws.column_dimensions["B"].width = 16
-    ws.column_dimensions["C"].width = 12
-    ws.column_dimensions["D"].width = 30
-    ws.column_dimensions["E"].width = 25
-    ws.column_dimensions["F"].width = 12
-
-    buf = io.BytesIO()
-    wb.save(buf)
-    buf.seek(0)
-    return buf.getvalue()
-
-
 async def sched_upload_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     if not await _require_admin(update):
         return ConversationHandler.END
-    # Отправляем шаблон-файл, который нужно заполнить
-    try:
-        template_bytes = await asyncio.to_thread(generate_template_xlsx)
-        await context.bot.send_document(
-            chat_id=update.effective_chat.id,
-            document=io.BytesIO(template_bytes),
-            filename="шаблон_расписания.xlsx",
-            caption=(
-                "📋 Шаблон расписания.\n\n"
-                "1. Скачайте файл\n"
-                "2. Заполните столбцы «Предмет», «Преподаватель», «Кабинет»\n"
-                "3. Удалите лишние строки с пустым «Предмет»\n"
-                "4. Пришлите заполненный файл обратно"
-            ),
-        )
-    except Exception:
-        logger.exception("Не удалось создать шаблон")
     await query.edit_message_text(
-        "📤 Ожидание файла .xlsx.\n\n"
-        "Заполните шаблон выше и пришлите обратно.\n"
-        "Тип недели: Числитель или Знаменатель.\n"
-        "День: понедельник…суббота.",
+        "📤 Заполните этот файл и пришлите его обратно:",
         reply_markup=kb.cancel_button(),
     )
+    template_path = os.path.join(os.path.dirname(__file__), "assets", "schedule_template.xlsx")
+    try:
+        with open(template_path, "rb") as f:
+            await context.bot.send_document(
+                chat_id=update.effective_chat.id,
+                document=f,
+                filename="Формат_Расписания.xlsx",
+                caption=(
+                    "Впишите занятия в пустые ячейки. Для каждого дня — строки с номерами пар 0–6.\n"
+                    "Слева — Числитель, справа — Знаменатель. Пустая строка = пары нет.\n"
+                    "Заполненный файл пришлите сюда же."
+                ),
+            )
+    except FileNotFoundError:
+        logger.exception("Файл-шаблон schedule_template.xlsx не найден")
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text="⚠️ Файл-шаблон не найден на сервере. Обратитесь к разработчику.",
+        )
     return SCHED_UPLOAD_TEXT
 
 
-_HEADER_ALIASES = {
-    "week_type": ["тип недели", "неделя", "числитель/знаменатель"],
-    "day": ["день", "день недели"],
-    "pair_number": ["номер пары", "пара", "№ пары"],
-    "subject": ["предмет", "дисциплина"],
-    "teacher": ["преподаватель", "препод"],
-    "room": ["кабинет", "аудитория"],
-}
-
-
-def _detect_columns(header_row) -> dict:
-    """Ищет индекс колонки для каждого логического поля по заголовку (регистронезависимо)."""
-    col_map = {}
-    for idx, cell in enumerate(header_row):
-        if cell is None:
-            continue
-        cell_norm = str(cell).strip().lower()
-        for field, aliases in _HEADER_ALIASES.items():
-            if field in col_map:
-                continue
-            if cell_norm in aliases:
-                col_map[field] = idx
-    return col_map
-
-
 def _parse_schedule_xlsx(file_bytes: bytes):
-    """Парсит .xlsx в {(week_type, day_index): [entries]} по заголовкам колонок (порядок не важен)."""
+    """Парсит .xlsx строго по шаблону Формат_Расписания.xlsx:
+    строки 1-2 — заголовки, дальше по каждому дню: строка с названием дня,
+    затем 7 строк (пары 0-6): № | Предмет(Числ) | Преподаватель(Числ) | Кабинет(Числ) |
+                               Предмет(Знам) | Преподаватель(Знам) | Кабинет(Знам).
+    Возвращает (result, errors), result = {(week_type, day_index): [entries]}."""
     import openpyxl
     wb = openpyxl.load_workbook(io.BytesIO(file_bytes), data_only=True)
     ws = wb.active
     rows = list(ws.iter_rows(values_only=True))
-    if not rows:
-        return {}, ["Файл пуст"]
-
-    col_map = _detect_columns(rows[0])
-    required = {"week_type", "day", "pair_number", "subject"}
-    missing = required - col_map.keys()
-    if missing:
-        return {}, [f"Не найдены обязательные колонки в заголовке: {', '.join(missing)}. "
-                     f"Проверьте, что первая строка файла — заголовки."]
 
     result = {}
     errors = []
-    for row_idx, row in enumerate(rows[1:], start=2):
+    current_day = None
+
+    for row_idx, row in enumerate(rows, start=1):
         if row is None or all(c is None for c in row):
             continue
+        cells = list(row) + [None] * (7 - len(row)) if len(row) < 7 else list(row[:7])
+        col0 = cells[0]
 
-        def get(field):
-            i = col_map.get(field)
-            return row[i] if i is not None and i < len(row) else None
+        if row_idx <= 2:
+            continue  # шапка таблицы (№/Числитель/Знаменатель, Предмет/Преподаватель/Кабинет)
 
-        week_type_raw = get("week_type")
-        day_raw = get("day")
-        pair_raw = get("pair_number")
-        subject_raw = get("subject")
-        teacher_raw = get("teacher")
-        room_raw = get("room")
-
-        if not week_type_raw or not day_raw or pair_raw is None or not subject_raw:
-            errors.append(f"Строка {row_idx}: пропущены обязательные поля")
+        # Строка с названием дня
+        if isinstance(col0, str):
+            day_norm = col0.strip().lower()
+            if day_norm in WEEKDAYS_RU:
+                current_day = WEEKDAYS_RU.index(day_norm)
             continue
 
-        week_type = str(week_type_raw).strip()
-        if week_type not in ("Числитель", "Знаменатель"):
-            errors.append(f"Строка {row_idx}: неверный тип недели '{week_type}'")
+        # Строка пары: col0 — номер пары
+        if current_day is None:
             continue
-
-        day_norm = str(day_raw).strip().lower()
-        if day_norm not in WEEKDAYS_RU:
-            errors.append(f"Строка {row_idx}: неизвестный день '{day_raw}'")
-            continue
-        day_idx = WEEKDAYS_RU.index(day_norm)
-
         try:
-            pair_num = int(pair_raw)
+            pair_num = int(col0)
         except (TypeError, ValueError):
-            errors.append(f"Строка {row_idx}: номер пары не число")
+            errors.append(f"Строка {row_idx}: не удалось определить номер пары")
             continue
 
-        result.setdefault((week_type, day_idx), []).append({
-            "pair_number": pair_num,
-            "subject": str(subject_raw).strip(),
-            "teacher": str(teacher_raw).strip() if teacher_raw else "",
-            "room": str(room_raw).strip() if room_raw else "",
-        })
+        subj_num, teach_num, room_num = cells[1], cells[2], cells[3]
+        subj_den, teach_den, room_den = cells[4], cells[5], cells[6]
+
+        if subj_num:
+            result.setdefault(("Числитель", current_day), []).append({
+                "pair_number": pair_num,
+                "subject": str(subj_num).strip(),
+                "teacher": str(teach_num).strip() if teach_num else "",
+                "room": str(room_num).strip() if room_num else "",
+            })
+        if subj_den:
+            result.setdefault(("Знаменатель", current_day), []).append({
+                "pair_number": pair_num,
+                "subject": str(subj_den).strip(),
+                "teacher": str(teach_den).strip() if teach_den else "",
+                "room": str(room_den).strip() if room_den else "",
+            })
+
     return result, errors
 
 
@@ -827,6 +750,7 @@ async def sched_new_pair(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def sched_delete_pair(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
+    await query.answer()
     _, week_type, day_idx, pair_num = query.data.split("_")
     await asyncio.to_thread(db.delete_pair, week_type, int(day_idx), int(pair_num))
     await query.answer("Пара удалена", show_alert=True)
