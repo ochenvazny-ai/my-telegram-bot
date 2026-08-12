@@ -3,7 +3,6 @@ import sys
 import asyncio
 import logging
 import threading
-import atexit
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
 from telegram.ext import (
@@ -24,19 +23,6 @@ logging.basicConfig(
     level=logging.INFO,
 )
 logger = logging.getLogger(__name__)
-
-
-# ---------- Фильтр токена из логов ----------
-# httpx логирует полные URL, включая токен бота. Этот фильтр заменяет его на ***.
-class TokenRedactFilter(logging.Filter):
-    def filter(self, record: logging.LogRecord) -> bool:
-        if BOT_TOKEN and BOT_TOKEN in record.getMessage():
-            record.msg = record.getMessage().replace(BOT_TOKEN, "***TOKEN***")
-        return True
-
-
-for name in ("httpx", "telegram", "urllib3"):
-    logging.getLogger(name).addFilter(TokenRedactFilter())
 
 
 async def error_handler(update, context):
@@ -139,8 +125,12 @@ def build_conversations():
 
 
 def main():
+    try:
+        asyncio.get_event_loop()
+    except RuntimeError:
+        asyncio.set_event_loop(asyncio.new_event_loop())
+
     db.init_default_schedule()
-    db.cleanup_old_schedule_cache(days=30)
 
     application = Application.builder().token(BOT_TOKEN).build()
     application.add_error_handler(error_handler)
@@ -155,7 +145,6 @@ def main():
 
     # Главное меню / пользовательские разделы
     application.add_handler(CallbackQueryHandler(hu.main_menu_callback, pattern="^main_menu$"))
-    application.add_handler(CallbackQueryHandler(hu.back_to_menu_new, pattern="^back_to_menu_new$"))
     application.add_handler(CallbackQueryHandler(hu.show_schedule, pattern="^menu_zam$"))
     application.add_handler(CallbackQueryHandler(hu.show_hw, pattern="^menu_hw$"))
     application.add_handler(CallbackQueryHandler(hu.show_announcements, pattern="^menu_ann$"))
@@ -221,10 +210,6 @@ def main():
 
     logger.info("Бот запущен. Health-сервер на порту %s", os.environ.get("PORT", 8000))
     application.run_polling(drop_pending_updates=True)
-
-
-# ---------- Graceful shutdown ----------
-atexit.register(db.close_pool)
 
 
 if __name__ == "__main__":
