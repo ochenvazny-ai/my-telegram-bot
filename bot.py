@@ -14,9 +14,9 @@ import handlers_user as hu
 import handlers_admin as ha
 import schedule_image as sched_img
 from config import (
-    BOT_TOKEN, HW_TEXT, HW_DUE, ANN_TEXT, ANN_CONFIRM, REPLNOTE_TEXT, REPLNOTE_CONFIRM, PH_DATE,
-    SCHED_UPLOAD_TEXT, SCHED_FIELD_VALUE, ADMIN_ID, ADMIN_NAME,
-    EXTRA_NAME, EXTRA_CONTENT, SET_GROUP, SET_BOT_NAME, SET_BOT_PHOTO,
+    BOT_TOKEN, HW_TEXT, HW_DUE, ANN_TEXT, ANN_PHOTO, ANN_CONFIRM,
+    REPLNOTE_TEXT, REPLNOTE_CONFIRM, SCHED_UPLOAD_TEXT, SCHED_FIELD_VALUE,
+    ADMIN_ID, ADMIN_NAME, EXTRA_NAME, EXTRA_CONTENT, SET_GROUP, SET_BOT_NAME, SET_BOT_PHOTO,
 )
 
 logging.basicConfig(
@@ -68,6 +68,11 @@ def build_conversations():
         entry_points=[CallbackQueryHandler(ha.add_ann_start, pattern="^a_add_ann$")],
         states={
             ANN_TEXT: [MessageHandler(filters.TEXT & ~filters.COMMAND, ha.add_ann_text)],
+            ANN_PHOTO: [
+                MessageHandler(filters.PHOTO, ha.add_ann_photo),
+                CallbackQueryHandler(ha.add_ann_skip_photo, pattern="^ann_skip_photo$"),
+                CallbackQueryHandler(ha.add_ann_change_photo, pattern="^ann_change_photo$"),
+            ],
             ANN_CONFIRM: [CallbackQueryHandler(ha.add_ann_confirm, pattern="^ann_send_(yes|no)$")],
         },
         fallbacks=fallback,
@@ -79,12 +84,6 @@ def build_conversations():
             REPLNOTE_TEXT: [MessageHandler(filters.TEXT & ~filters.COMMAND, ha.add_replnote_text)],
             REPLNOTE_CONFIRM: [CallbackQueryHandler(ha.add_replnote_confirm, pattern="^replnote_save_(yes|no)$")],
         },
-        fallbacks=fallback,
-    )
-
-    conv_set_ph = ConversationHandler(
-        entry_points=[CallbackQueryHandler(ha.set_ph_start, pattern="^phset_manual$")],
-        states={PH_DATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, ha.set_ph_date)]},
         fallbacks=fallback,
     )
 
@@ -118,7 +117,6 @@ def build_conversations():
             EXTRA_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, ha.extra_add_name)],
             EXTRA_CONTENT: [
                 MessageHandler(filters.PHOTO, ha.extra_add_content_photo),
-                MessageHandler(filters.Document.ALL, ha.extra_add_content_photo),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, ha.extra_add_content_text),
                 CallbackQueryHandler(ha.extra_add_skip_photo, pattern="^extra_skip_photo$"),
             ],
@@ -145,7 +143,7 @@ def build_conversations():
     )
 
     return [
-        conv_add_hw, conv_add_ann, conv_add_replnote, conv_set_ph, conv_add_admin,
+        conv_add_hw, conv_add_ann, conv_add_replnote, conv_add_admin,
         conv_sched_upload, conv_sched_field,
         conv_extra_add, conv_set_group, conv_set_bot_name, conv_set_bot_photo,
     ]
@@ -193,7 +191,6 @@ def main():
     application.add_handler(CallbackQueryHandler(ha.shift_set, pattern="^shiftset_(1|2)$"))
     application.add_handler(CallbackQueryHandler(ha.hw_menu, pattern="^a_hw_menu$"))
     application.add_handler(CallbackQueryHandler(ha.ann_menu, pattern="^a_ann_menu$"))
-    application.add_handler(CallbackQueryHandler(ha.ph_menu, pattern="^a_ph_menu$"))
     application.add_handler(CallbackQueryHandler(ha.admins_menu, pattern="^a_admins_menu$"))
     application.add_handler(CallbackQueryHandler(ha.extra_menu, pattern="^a_extra_menu$"))
     application.add_handler(CallbackQueryHandler(ha.bot_settings_menu, pattern="^a_bot_settings$"))
@@ -206,11 +203,6 @@ def main():
     application.add_handler(CallbackQueryHandler(ha.del_ann_pick, pattern="^delann_\\d+$"))
     application.add_handler(CallbackQueryHandler(ha.del_ann_confirm, pattern="^confirm_delann_\\d+$"))
 
-    application.add_handler(CallbackQueryHandler(ha.set_ph_menu, pattern="^a_set_ph$"))
-    application.add_handler(CallbackQueryHandler(ha.set_ph_quick, pattern="^phset_(tomorrow|daftertomorrow)$"))
-    application.add_handler(CallbackQueryHandler(ha.unset_ph_list, pattern="^a_unset_ph$"))
-    application.add_handler(CallbackQueryHandler(ha.unset_ph_confirm, pattern="^unsetph_\\d+$"))
-
     application.add_handler(CallbackQueryHandler(ha.del_admin_list, pattern="^a_del_admin$"))
     application.add_handler(CallbackQueryHandler(ha.del_admin_pick, pattern="^deladmin_\\d+$"))
     application.add_handler(CallbackQueryHandler(ha.del_admin_confirm, pattern="^confirm_deladmin_\\d+$"))
@@ -221,6 +213,7 @@ def main():
     application.add_handler(CallbackQueryHandler(ha.extra_del_confirm, pattern="^confirm_delextra_\\d+$"))
     application.add_handler(CallbackQueryHandler(ha.extra_view, pattern="^a_view_extra$"))
 
+    # Расписание (теперь в настройках бота)
     application.add_handler(CallbackQueryHandler(ha.edit_schedule_menu, pattern="^a_sched_menu$"))
     application.add_handler(CallbackQueryHandler(ha.del_all_day_menu, pattern="^a_del_all_day$"))
     application.add_handler(CallbackQueryHandler(ha.sched_by_day_start, pattern="^sched_by_day$"))

@@ -54,8 +54,6 @@ def extract_metadata_from_html(html_text: str):
 
 
 def parse_replacements_from_html(html_text: str, group_name: str = None):
-    """group_name по умолчанию берётся из БД (db.get_group_name),
-    fallback на GROUP_NAME из config.py."""
     if group_name is None:
         try:
             group_name = db.get_group_name()
@@ -150,10 +148,11 @@ def build_final_entries(week_type: str, day_of_week: int, replacements: list[dic
 
 
 def format_schedule_message(target_date: date_cls, week_type: str, entries: list[dict], site_url: str,
-                             note: str = "", replacement_notes: list[str] | None = None) -> str:
+                             note: str = "", replacement_notes: list[str] | None = None,
+                             shift: str = "1") -> str:
     weekday_name = WEEKDAYS_RU[target_date.weekday()]
-    text = f"✨ РАСПИСАНИЕ ЗАНЯТИЙ НА {format_date_russian(target_date)} ({week_type}) ✨\n"
-    text += f"({weekday_name})\n"
+    text = f"✨ РАСПИСАНИЕ ЗАНЯТИЙ НА {format_date_russian(target_date)} ✨\n"
+    text += f"({weekday_name}) • {shift} смена • {week_type}\n"
     if note:
         text += f"\n⚠️ {note}\n"
     text += "\n"
@@ -187,13 +186,6 @@ async def _fetch_site_html(site_url: str) -> str | None:
 
 
 def _pre_holiday_note(file_date: date_cls, today: date_cls) -> str | None:
-    mmdd = file_date.strftime("%m-%d")
-    if not db.is_pre_holiday_today(mmdd):
-        return None
-    if file_date == today:
-        return "Сегодня пары по часу!"
-    if file_date == today + timedelta(days=1):
-        return "Завтра пары по часу!"
     return None
 
 
@@ -211,12 +203,11 @@ async def get_schedule_for_display() -> tuple[str, bool]:
 
     weekday_name = WEEKDAYS_RU[file_date.weekday()]
     if weekday_name == "воскресенье":
-        return f"📅 {format_date_russian(file_date)} — воскресенье, пар нет.", True
+        return f"📅 {format_date_russian(file_date)} ({shift} смена) — воскресенье, пар нет.", True
 
     today = datetime.now().date()
     day_diff = (file_date - today).days
 
-    ph_note = await asyncio.to_thread(_pre_holiday_note, file_date, today)
     repl_notes = await asyncio.to_thread(db.get_active_replacement_notes)
 
     cached = await asyncio.to_thread(db.get_cached_schedule, file_date)
@@ -226,7 +217,7 @@ async def get_schedule_for_display() -> tuple[str, bool]:
             "room": row.get("room", ""), "is_replaced": row.get("is_replaced", False),
         } for row in cached]
         return format_schedule_message(file_date, week_type, entries, site_url,
-                                        note=ph_note or "", replacement_notes=repl_notes), True
+                                        note="", replacement_notes=repl_notes, shift=shift), True
 
     day_of_week = file_date.weekday()
 
@@ -235,18 +226,18 @@ async def get_schedule_for_display() -> tuple[str, bool]:
         entries = await asyncio.to_thread(build_final_entries, week_type, day_of_week, replacements)
         await asyncio.to_thread(db.save_schedule_cache, file_date, week_type, weekday_name, entries)
         return format_schedule_message(file_date, week_type, entries, site_url,
-                                        note=ph_note or "", replacement_notes=repl_notes), True
+                                        note="", replacement_notes=repl_notes, shift=shift), True
     elif day_diff < 0:
         base = await asyncio.to_thread(db.get_base_schedule, week_type, day_of_week)
         entries = [{"pair_num": str(p), "subject": v["subject"], "teacher": v["teacher"],
                     "room": v["room"], "is_replaced": False} for p, v in sorted(base.items())]
         note = "Это прошедшая дата, замены на неё не сохранялись."
         return format_schedule_message(file_date, week_type, entries, site_url, note=note,
-                                        replacement_notes=repl_notes), True
+                                        replacement_notes=repl_notes, shift=shift), True
     else:
         base = await asyncio.to_thread(db.get_base_schedule, week_type, day_of_week)
         entries = [{"pair_num": str(p), "subject": v["subject"], "teacher": v["teacher"],
                     "room": v["room"], "is_replaced": False} for p, v in sorted(base.items())]
-        note = "Замены на эту дату ещё не известны." + (f" {ph_note}" if ph_note else "")
+        note = "Замены на эту дату ещё не известны."
         return format_schedule_message(file_date, week_type, entries, site_url, note=note,
-                                        replacement_notes=repl_notes), True
+                                        replacement_notes=repl_notes, shift=shift), True

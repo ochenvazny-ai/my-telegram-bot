@@ -132,13 +132,13 @@ def delete_task_db(task_id: int) -> bool:
 
 
 # ---------- ANNOUNCEMENTS ----------
-def add_announcement_db(text: str, author_id: int, is_replacement_note: bool = False):
+def add_announcement_db(text: str, author_id: int, is_replacement_note: bool = False, photo_id: str = None) -> int | None:
     try:
         with get_cursor(commit=True) as cur:
             cur.execute(
-                "INSERT INTO announcements (text, created_at, author_id, is_active, is_replacement_note) "
-                "VALUES (%s, NOW(), %s, true, %s) RETURNING id;",
-                (text, author_id, is_replacement_note),
+                "INSERT INTO announcements (text, created_at, author_id, is_active, is_replacement_note, photo_id) "
+                "VALUES (%s, NOW(), %s, true, %s, %s) RETURNING id;",
+                (text, author_id, is_replacement_note, photo_id),
             )
             return cur.fetchone()["id"]
     except Exception:
@@ -150,10 +150,12 @@ def get_active_announcements():
     try:
         with get_cursor() as cur:
             cur.execute(
-                "SELECT id, text, created_at, is_replacement_note FROM announcements WHERE is_active = true "
+                "SELECT id, text, created_at, is_replacement_note, photo_id "
+                "FROM announcements WHERE is_active = true "
                 "ORDER BY created_at DESC;"
             )
-            return [(r["id"], r["text"], str(r["created_at"]), r["is_replacement_note"]) for r in cur.fetchall()]
+            return [(r["id"], r["text"], str(r["created_at"]), r["is_replacement_note"], r["photo_id"])
+                    for r in cur.fetchall()]
     except Exception:
         logger.exception("get_active_announcements failed")
         return []
@@ -184,7 +186,7 @@ def deactivate_announcement_db(ann_id: int) -> bool:
         return False
 
 
-# ---------- PRE-HOLIDAYS ----------
+# ---------- PRE-HOLIDAYS (больше не используется, оставлено для совместимости) ----------
 def is_pre_holiday_today(mmdd: str) -> bool:
     try:
         with get_cursor() as cur:
@@ -198,43 +200,15 @@ def is_pre_holiday_today(mmdd: str) -> bool:
 
 
 def set_pre_holiday(mmdd: str) -> bool:
-    try:
-        with get_cursor(commit=True) as cur:
-            cur.execute("SELECT id FROM pre_holidays WHERE date = %s;", (mmdd,))
-            existing = cur.fetchone()
-            if existing:
-                cur.execute("UPDATE pre_holidays SET is_active = true WHERE id = %s;", (existing["id"],))
-            else:
-                cur.execute(
-                    "INSERT INTO pre_holidays (date, is_active, created_at) VALUES (%s, true, NOW());",
-                    (mmdd,),
-                )
-        return True
-    except Exception:
-        logger.exception("set_pre_holiday failed for %s", mmdd)
-        return False
+    return True
 
 
 def get_active_pre_holidays():
-    try:
-        with get_cursor() as cur:
-            cur.execute("SELECT id, date FROM pre_holidays WHERE is_active = true ORDER BY date;")
-            return [(r["id"], r["date"]) for r in cur.fetchall()]
-    except Exception:
-        logger.exception("get_active_pre_holidays failed")
-        return []
+    return []
 
 
 def unset_pre_holiday(ph_id: int) -> bool:
-    try:
-        with get_cursor(commit=True) as cur:
-            cur.execute(
-                "UPDATE pre_holidays SET is_active = false WHERE id = %s RETURNING id;", (ph_id,)
-            )
-            return cur.fetchone() is not None
-    except Exception:
-        logger.exception("unset_pre_holiday failed for %s", ph_id)
-        return False
+    return True
 
 
 # ---------- BASE SCHEDULE ----------

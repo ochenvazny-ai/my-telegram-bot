@@ -14,7 +14,8 @@ import keyboards as kb
 import schedule_image as sched_img
 from config import (
     INITIAL_ADMIN_ID, WEEKDAYS_RU,
-    HW_TEXT, HW_DUE, ANN_TEXT, ANN_CONFIRM, REPLNOTE_TEXT, REPLNOTE_CONFIRM, PH_DATE,
+    HW_TEXT, HW_DUE, ANN_TEXT, ANN_PHOTO, ANN_CONFIRM,
+    REPLNOTE_TEXT, REPLNOTE_CONFIRM, PH_DATE,
     SCHED_UPLOAD_TEXT, SCHED_FIELD_VALUE, ADMIN_ID, ADMIN_NAME,
     EXTRA_NAME, EXTRA_CONTENT, SET_GROUP, SET_BOT_NAME, SET_BOT_PHOTO,
 )
@@ -22,6 +23,7 @@ from config import (
 logger = logging.getLogger(__name__)
 
 
+# ---------- ОБЩИЕ ----------
 async def _require_admin(update: Update) -> bool:
     query = update.callback_query
     user_id = update.effective_user.id
@@ -73,14 +75,6 @@ async def ann_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.edit_message_text("📢 Объявления:", reply_markup=kb.ann_menu_kb())
 
 
-async def ph_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    if not await _require_admin(update):
-        return
-    await query.edit_message_text("📅 Праздничный день:", reply_markup=kb.ph_menu_kb())
-
-
 async def admins_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -126,6 +120,7 @@ async def shift_set(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.edit_message_text(f"✅ Смена изменена на {shift} смену.", reply_markup=kb.admin_panel_kb())
 
 
+# ---------- ДЗ ----------
 async def add_hw_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -212,34 +207,100 @@ async def del_hw_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text("\n".join(lines), reply_markup=kb.delete_hw_kb(tasks))
 
 
+# ---------- ОБЪЯВЛЕНИЯ (с поддержкой фото) ----------
 async def add_ann_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     if not await _require_admin(update):
         return ConversationHandler.END
-    await query.edit_message_text("📝 Введите текст объявления:", reply_markup=kb.cancel_button())
+    try:
+        await query.message.delete()
+    except Exception:
+        pass
+    await context.bot.send_message(
+        chat_id=update.effective_chat.id,
+        text=(
+            "📝 Введите текст объявления.\n"
+            "Можно также прикрепить фото (отправьте его как фото, опционально с подписью).\n"
+            "Если фото — текст подписи станет текстом объявления.\n"
+            "Если только текст — просто напишите его."
+        ),
+        reply_markup=kb.cancel_button(),
+    )
     return ANN_TEXT
 
 
 async def add_ann_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text.strip()
-    context.user_data['ann_text'] = text
+    """Текст объявления. После текста спрашиваем, есть ли фото."""
+    context.user_data['ann_text'] = update.message.text.strip()
     await update.message.reply_text(
+        f"📝 Текст объявления:\n{context.user_data['ann_text']}\n\n"
+        f"Хотите прикрепить фото? Пришлите фото (можно с подписью), либо нажмите «Пропустить».",
+        reply_markup=kb.ann_skip_photo_kb(),
+    )
+    return ANN_PHOTO
+
+
+async def add_ann_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Получили фото. Текст объявления = caption (если есть) ИЛИ ранее введённый текст."""
+    caption = (update.message.caption or "").strip() if update.message else ""
+    photo_id = None
+    if update.message and update.message.photo:
+        photo_id = update.message.photo[-1].file_id
+
+    # Текст объявления: если caption непустой — он; иначе — ранее введённый текст.
+    ann_text = caption if caption else context.user_data.get('ann_text', '')
+    context.user_data['ann_text'] = ann_text
+    context.user_data['ann_photo_id'] = photo_id
+
+    # Превью с пометкой о вложении
+    preview_text = ann_text if ann_text else "(без текста)"
+    await update.message.reply_text(
+        f"📢 Текст объявления:\n{preview_text}\n📎 Вложение: фото\n\n"
+        f"Отправить всем пользователям?",
+        reply_markup=kb.announcement_confirm_kb(),
+    )
+    return ANN_CONFIRM
+
+
+async def add_ann_skip_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Пропустили фото — итоговый текст без вложения."""
+    query = update.callback_query
+    await query.answer()
+    context.user_data['ann_photo_id'] = None
+    text = context.user_data.get('ann_text', '')
+    await query.edit_message_text(
         f"📢 Текст объявления:\n{text}\n\nОтправить всем пользователям?",
         reply_markup=kb.announcement_confirm_kb(),
     )
     return ANN_CONFIRM
 
 
+async def add_ann_change_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Поменять фото."""
+    query = update.callback_query
+    await query.answer()
+    context.user_data.pop('ann_photo_id', None)
+    await query.edit_message_text(
+        "Пришлите фото (можно с подписью):",
+        reply_markup=kb.cancel_button(),
+    )
+    return ANN_PHOTO
+
+
 RATE_LIMIT_DELAY = 0.05
 
 
-async def _broadcast(bot, text: str) -> tuple[int, int]:
+async def _broadcast(bot, text: str, has_attachment: bool) -> tuple[int, int]:
+    """Рассылает текст объявления. Если есть вложение — добавляет '📎 Вложение' в конец текста."""
     user_ids = await asyncio.to_thread(db.get_all_user_ids)
     sent, failed = 0, 0
+    broadcast_text = f"📢 {text}"
+    if has_attachment:
+        broadcast_text += "\n\n📎 Вложение"
     for uid in user_ids:
         try:
-            await bot.send_message(chat_id=uid, text=f"📢 {text}")
+            await bot.send_message(chat_id=uid, text=broadcast_text)
             sent += 1
         except Exception:
             failed += 1
@@ -252,12 +313,16 @@ async def add_ann_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     text = context.user_data.get('ann_text', '')
+    photo_id = context.user_data.get('ann_photo_id')
     author_id = update.effective_user.id
-    await asyncio.to_thread(db.add_announcement_db, text, author_id)
+    has_attach = bool(photo_id)
+    # Сохраняем в БД (даже если текст пустой — с пометкой)
+    save_text = text if text else ""
+    await asyncio.to_thread(db.add_announcement_db, save_text, author_id, False, photo_id)
 
     if query.data == "ann_send_yes":
         await query.edit_message_text("⏳ Рассылаю объявление...")
-        sent, failed = await _broadcast(context.bot, text)
+        sent, failed = await _broadcast(context.bot, save_text, has_attach)
         await query.message.reply_text(f"✅ Отправлено {sent}, ❌ не доставлено {failed}")
     else:
         await query.edit_message_text("✅ Объявление сохранено. Рассылка не выполнялась.")
@@ -277,9 +342,12 @@ async def del_ann_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text("📭 Нет активных объявлений.", reply_markup=kb.admin_panel_kb())
         return
     lines = ["Выберите объявление для удаления:\n"]
-    for idx, (_, text, created_at, is_note) in enumerate(anns, start=1):
-        prefix = "📝 " if is_note else ""
-        lines.append(f"{idx}️⃣ {prefix}{created_at.split(' ')[0]}: {text}")
+    for idx, item in enumerate(anns, start=1):
+        ann_id, text, created_at, is_note, photo_id = item
+        prefix = "📝 " if is_note else ("📎 " if photo_id else "")
+        date_part = created_at.split(" ")[0] if created_at else ""
+        short = text[:28] + "..." if len(text) > 28 else text
+        lines.append(f"{idx}️⃣ {prefix}{date_part}: {short or '(без текста)'}")
     await query.edit_message_text("\n".join(lines), reply_markup=kb.delete_ann_kb(anns))
 
 
@@ -306,9 +374,12 @@ async def del_ann_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text("📭 Нет активных объявлений.", reply_markup=kb.admin_panel_kb())
     else:
         lines = ["Выберите объявление для удаления:\n"]
-        for idx, (_, text, created_at, is_note) in enumerate(anns, start=1):
-            prefix = "📝 " if is_note else ""
-            lines.append(f"{idx}️⃣ {prefix}{created_at.split(' ')[0]}: {text}")
+        for idx, item in enumerate(anns, start=1):
+            ann_id, text, created_at, is_note, photo_id = item
+            prefix = "📝 " if is_note else ("📎 " if photo_id else "")
+            date_part = created_at.split(" ")[0] if created_at else ""
+            short = text[:28] + "..." if len(text) > 28 else text
+            lines.append(f"{idx}️⃣ {prefix}{date_part}: {short or '(без текста)'}")
         await query.edit_message_text("\n".join(lines), reply_markup=kb.delete_ann_kb(anns))
 
 
@@ -350,90 +421,7 @@ async def add_replnote_confirm(update: Update, context: ContextTypes.DEFAULT_TYP
     return ConversationHandler.END
 
 
-async def set_ph_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    if not await _require_admin(update):
-        return
-    await query.edit_message_text("Когда предпраздничный день?", reply_markup=kb.ph_set_choice_kb())
-
-
-async def set_ph_quick(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    if not await _require_admin(update):
-        return
-    days_ahead = 1 if query.data == "phset_tomorrow" else 2
-    target = datetime.now().date() + timedelta(days=days_ahead)
-    mmdd = target.strftime("%m-%d")
-    ok = await asyncio.to_thread(db.set_pre_holiday, mmdd)
-    display = target.strftime("%d.%m")
-    if ok:
-        await query.edit_message_text(f"✅ Предпраздничный день {display} назначен.", reply_markup=kb.admin_panel_kb())
-    else:
-        await query.edit_message_text("❌ Ошибка при сохранении.", reply_markup=kb.admin_panel_kb())
-
-
-async def set_ph_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    if not await _require_admin(update):
-        return ConversationHandler.END
-    await query.edit_message_text("Введите дату в формате ДД.ММ (например, 09.05):", reply_markup=kb.cancel_button())
-    return PH_DATE
-
-
-async def set_ph_date(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text.strip()
-    m = re.match(r'^(\d{2})\.(\d{2})$', text)
-    if not m:
-        await update.message.reply_text(
-            "❌ Неверный формат. Введите дату как ДД.ММ (например, 09.05):", reply_markup=kb.cancel_button()
-        )
-        return PH_DATE
-    day, month = m.group(1), m.group(2)
-    mmdd = f"{month}-{day}"
-    ok = await asyncio.to_thread(db.set_pre_holiday, mmdd)
-    if ok:
-        await update.message.reply_text(f"✅ Предпраздничный день {text} назначен.")
-    else:
-        await update.message.reply_text("❌ Ошибка при сохранении.")
-    await update.message.reply_text("👑 Админ-панель", reply_markup=kb.admin_panel_kb())
-    return ConversationHandler.END
-
-
-async def unset_ph_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    if not await _require_admin(update):
-        return
-    items = await asyncio.to_thread(db.get_active_pre_holidays)
-    if not items:
-        await query.edit_message_text("📭 Нет активных предпраздничных дней.", reply_markup=kb.admin_panel_kb())
-        return
-    display_items = [(i, f"{d.split('-')[1]}.{d.split('-')[0]}") for i, d in items]
-    await query.edit_message_text(
-        "Выберите предпраздничный день для отмены:", reply_markup=kb.pre_holiday_list_kb(display_items, "unsetph")
-    )
-
-
-async def unset_ph_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    if not await _require_admin(update):
-        return
-    ph_id = int(query.data.split("_")[1])
-    await asyncio.to_thread(db.unset_pre_holiday, ph_id)
-    items = await asyncio.to_thread(db.get_active_pre_holidays)
-    if not items:
-        await query.edit_message_text("📭 Нет активных предпраздничных дней.", reply_markup=kb.admin_panel_kb())
-    else:
-        display_items = [(i, f"{d.split('-')[1]}.{d.split('-')[0]}") for i, d in items]
-        await query.edit_message_text(
-            "🗑 Отменено. Осталось:", reply_markup=kb.pre_holiday_list_kb(display_items, "unsetph")
-        )
-
-
+# ---------- АДМИНЫ ----------
 async def add_admin_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -528,6 +516,7 @@ async def view_admins(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.edit_message_text("\n".join(lines), reply_markup=kb.back_button("a_admins_menu"))
 
 
+# ---------- ДОП. ЗАНЯТИЯ ----------
 async def extra_add_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -548,25 +537,11 @@ async def extra_add_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def extra_add_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['extra_subject'] = update.message.text.strip()
     await update.message.reply_text(
-        "Теперь введите расписание (текстом) или пришлите фотографию с расписанием.\n"
-        "Если хотите только текст — напишите его.\n"
-        "Если фото — пришлите как документ или фото.",
+        "Пришлите фото расписания (опционально с подписью) или нажмите «Пропустить фото».\n"
+        "Текст подписи к фото будет показан отдельно в доп. занятии.",
         reply_markup=kb.extra_skip_photo_kb(),
     )
     return EXTRA_CONTENT
-
-
-async def extra_add_content_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    subject = context.user_data.get('extra_subject', '')
-    description = update.message.text.strip()
-    new_id = await asyncio.to_thread(db.add_extra_class, subject, description, None)
-    if new_id:
-        await update.message.reply_text(f"✅ Дополнительное занятие «{subject}» добавлено.")
-    else:
-        await update.message.reply_text("❌ Ошибка при сохранении.")
-    context.user_data.clear()
-    await update.message.reply_text("👑 Админ-панель", reply_markup=kb.admin_panel_kb())
-    return ConversationHandler.END
 
 
 async def extra_add_content_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -583,6 +558,17 @@ async def extra_add_content_photo(update: Update, context: ContextTypes.DEFAULT_
     context.user_data.clear()
     await update.message.reply_text("👑 Админ-панель", reply_markup=kb.admin_panel_kb())
     return ConversationHandler.END
+
+
+async def extra_add_content_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Только текст, без фото — пишем без описания."""
+    subject = context.user_data.get('extra_subject', '')
+    await update.message.reply_text(
+        "Если хотите добавить фото расписания — пришлите его. "
+        "Если только название без расписания — нажмите «Пропустить фото».",
+        reply_markup=kb.extra_skip_photo_kb(),
+    )
+    return EXTRA_CONTENT
 
 
 async def extra_add_skip_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -653,11 +639,13 @@ async def extra_view(update: Update, context: ContextTypes.DEFAULT_TYPE):
     lines = ["👀 Активные дополнительные занятия:\n"]
     for idx, (item_id, subject, description, photo_id, created_at) in enumerate(items, start=1):
         date_part = created_at.split(" ")[0] if created_at else ""
+        marker = "📎" if photo_id else ""
         snippet = (description or "")[:40]
-        lines.append(f"{idx}️⃣ {subject} ({date_part}) {snippet}{'…' if snippet and len(description or '') > 40 else ''}")
+        lines.append(f"{idx}️⃣ {marker}{subject} ({date_part}) {snippet}{'…' if snippet and len(description or '') > 40 else ''}")
     await query.edit_message_text("\n".join(lines), reply_markup=kb.back_button("a_extra_menu"))
 
 
+# ---------- НАСТРОЙКИ БОТА ----------
 async def set_group_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -679,7 +667,12 @@ async def set_group_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def set_group_finish(update: Update, context: ContextTypes.DEFAULT_TYPE):
     name = update.message.text.strip()
+    loading = await update.message.reply_text("⏳ Сохраняю название группы...")
     await asyncio.to_thread(db.set_group_name, name)
+    try:
+        await loading.delete()
+    except Exception:
+        pass
     await update.message.reply_text(f"✅ Название группы изменено на «{name}».")
     context.user_data.clear()
     await update.message.reply_text("👑 Админ-панель", reply_markup=kb.admin_panel_kb())
@@ -699,7 +692,7 @@ async def set_bot_name_start(update: Update, context: ContextTypes.DEFAULT_TYPE)
     await context.bot.send_message(
         chat_id=update.effective_chat.id,
         text=f"Текущее название для водяного знака: <b>{current}</b>\n\n"
-             "Введите новое название (будет отображаться как водяной знак на картинках расписания и звонков):",
+             "Введите новое название:",
         parse_mode='HTML',
         reply_markup=kb.cancel_button(),
     )
@@ -708,20 +701,22 @@ async def set_bot_name_start(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 async def set_bot_name_finish(update: Update, context: ContextTypes.DEFAULT_TYPE):
     name = update.message.text.strip()
-    # Сохраняем в БД для водяного знака
+    loading = await update.message.reply_text("⏳ Сохраняю и перегенерирую картинки...")
     await asyncio.to_thread(db.set_bot_display_name, name)
-    # Пробуем также обновить имя в Telegram (может не быть прав — не критично)
     tg_ok = False
     try:
         await context.bot.set_my_name(name=name)
         tg_ok = True
     except Exception:
         logger.exception("set_my_name failed")
-    # Перегенерируем картинки с новым водяным знаком
     try:
         await asyncio.to_thread(sched_img.regenerate_all_cached_images)
     except Exception:
         logger.exception("regenerate cache after rename failed")
+    try:
+        await loading.delete()
+    except Exception:
+        pass
     msg = f"✅ Название для водяного знака изменено на «{name}». Картинки перегенерированы."
     if tg_ok:
         msg += "\nИмя в Telegram тоже обновлено."
@@ -763,12 +758,13 @@ async def set_bot_photo_finish(update: Update, context: ContextTypes.DEFAULT_TYP
     return ConversationHandler.END
 
 
+# ---------- РАСПИСАНИЕ (теперь в настройках бота) ----------
 async def edit_schedule_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     if not await _require_admin(update):
         return
-    await query.edit_message_text("Изменение расписания:", reply_markup=kb.schedule_edit_menu_kb())
+    await query.edit_message_text("⚙️ Изменение расписания:", reply_markup=kb.schedule_edit_menu_kb())
 
 
 async def sched_upload_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -909,13 +905,12 @@ async def sched_upload_confirm(update: Update, context: ContextTypes.DEFAULT_TYP
         try:
             await query.edit_message_text(
                 "❌ Данные для загрузки потеряны. Попробуйте заново.",
-                reply_markup=kb.admin_panel_kb(),
+                reply_markup=kb.bot_settings_kb(),
             )
         except Exception:
             pass
         return
 
-    # Шаг 1: удаляем подтверждение, показываем «Загружаю расписание...»
     try:
         await query.delete_message()
     except Exception:
@@ -925,7 +920,6 @@ async def sched_upload_confirm(update: Update, context: ContextTypes.DEFAULT_TYP
         text="⏳ Загружаю расписание...",
     )
 
-    # Шаг 2: реально применяем изменения + перегенерируем кэш картинок
     try:
         for (week_type, day_idx), entries in parsed.items():
             await asyncio.to_thread(db.replace_day_schedule, week_type, day_idx, entries)
@@ -939,11 +933,10 @@ async def sched_upload_confirm(update: Update, context: ContextTypes.DEFAULT_TYP
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
             text="❌ Ошибка при сохранении расписания. Попробуйте снова.",
-            reply_markup=kb.admin_panel_kb(),
+            reply_markup=kb.bot_settings_kb(),
         )
         return
 
-    # Шаг 3: удаляем «Загружаю...» и пишем «Готово»
     try:
         await loading_msg.delete()
     except Exception:
@@ -951,7 +944,7 @@ async def sched_upload_confirm(update: Update, context: ContextTypes.DEFAULT_TYP
     await context.bot.send_message(
         chat_id=update.effective_chat.id,
         text="✅ Расписание обновлено и картинки перегенерированы.",
-        reply_markup=kb.admin_panel_kb(),
+        reply_markup=kb.bot_settings_kb(),
     )
 
 
@@ -991,7 +984,7 @@ async def sched_delete_all_day(update: Update, context: ContextTypes.DEFAULT_TYP
     await asyncio.to_thread(sched_img.regenerate_all_cached_images)
     await query.edit_message_text(
         f"🗑 Все пары на {WEEKDAYS_RU[day_idx]} удалены (оба типа недели).",
-        reply_markup=kb.admin_panel_kb(),
+        reply_markup=kb.bot_settings_kb(),
     )
 
 
@@ -1094,7 +1087,7 @@ async def sched_field_value(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await asyncio.to_thread(sched_img.regenerate_all_cached_images)
             await update.message.reply_text(f"✅ Пара {pair_num} добавлена.")
             context.user_data.pop('sched_edit', None)
-            await update.message.reply_text("👑 Админ-панель", reply_markup=kb.admin_panel_kb())
+            await update.message.reply_text("⚙️ Настройки бота", reply_markup=kb.bot_settings_kb())
             return ConversationHandler.END
 
     pairs = await asyncio.to_thread(db.get_base_schedule, week_type, day_idx)
@@ -1106,5 +1099,5 @@ async def sched_field_value(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await asyncio.to_thread(sched_img.regenerate_all_cached_images)
     await update.message.reply_text("✅ Обновлено.")
     context.user_data.pop('sched_edit', None)
-    await update.message.reply_text("👑 Админ-панель", reply_markup=kb.admin_panel_kb())
+    await update.message.reply_text("⚙️ Настройки бота", reply_markup=kb.bot_settings_kb())
     return ConversationHandler.END

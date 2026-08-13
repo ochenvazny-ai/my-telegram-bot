@@ -29,9 +29,8 @@ def get_site_url(shift: str) -> str:
 
 # Состояния диалогов
 HW_TEXT, HW_DUE = range(2)
-ANN_TEXT, ANN_CONFIRM = range(2, 4)
-REPLNOTE_TEXT, REPLNOTE_CONFIRM = range(4, 6)
-PH_DATE = 6
+ANN_TEXT, ANN_PHOTO, ANN_CONFIRM = range(2, 5)
+REPLNOTE_TEXT, REPLNOTE_CONFIRM = range(5, 7)
 SCHED_UPLOAD_TEXT, SCHED_FIELD_VALUE = range(7, 9)
 ADMIN_ID, ADMIN_NAME = range(9, 11)
 

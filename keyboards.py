@@ -51,14 +51,6 @@ def bells_choice_kb():
     ])
 
 
-def bells_building_kb():
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("По А корпусу", callback_data="bells_regular_a")],
-        [InlineKeyboardButton("По Б корпусу", callback_data="bells_regular_b")],
-        [InlineKeyboardButton("🔙 Назад", callback_data="info_bells")],
-    ])
-
-
 def schedule_img_choice_kb():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("Числитель", callback_data="schedimg_num")],
@@ -86,14 +78,19 @@ def extra_skip_photo_kb():
     ])
 
 
+def ann_skip_photo_kb():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("⏭ Пропустить фото", callback_data="ann_skip_photo")],
+        [InlineKeyboardButton("🖼 Поменять фото", callback_data="ann_change_photo")],
+        [InlineKeyboardButton("❌ Отмена", callback_data="cancel_action")],
+    ])
+
+
 # ---------- АДМИН-ПАНЕЛЬ ----------
 def admin_panel_kb():
     kb = [
         [InlineKeyboardButton("📚 Домашнее задание", callback_data="a_hw_menu")],
         [InlineKeyboardButton("📢 Объявления", callback_data="a_ann_menu")],
-        [InlineKeyboardButton("📅 Праздничный день", callback_data="a_ph_menu")],
-        [InlineKeyboardButton("⚙️ Настроить Расписание", callback_data="a_sched_menu")],
-        [InlineKeyboardButton("📚 Доп. занятия", callback_data="a_extra_menu")],
         [InlineKeyboardButton("⚙️ Настройки бота", callback_data="a_bot_settings")],
         [InlineKeyboardButton("👥 Админы", callback_data="a_admins_menu")],
         [InlineKeyboardButton("🔙 Главное меню", callback_data="main_menu")],
@@ -123,23 +120,6 @@ def ann_menu_kb():
         [InlineKeyboardButton("➖ Удалить объявление", callback_data="a_del_ann")],
         [InlineKeyboardButton("📝 Подпись к замене", callback_data="a_add_replnote")],
         [InlineKeyboardButton("🔙 Назад", callback_data="admin_panel")],
-    ])
-
-
-def ph_menu_kb():
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("📅 Назначить предпраздничный день", callback_data="a_set_ph")],
-        [InlineKeyboardButton("❌ Отменить предпраздничный день", callback_data="a_unset_ph")],
-        [InlineKeyboardButton("🔙 Назад", callback_data="admin_panel")],
-    ])
-
-
-def ph_set_choice_kb():
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("Завтра", callback_data="phset_tomorrow")],
-        [InlineKeyboardButton("Послезавтра", callback_data="phset_daftertomorrow")],
-        [InlineKeyboardButton("Назначить дату", callback_data="phset_manual")],
-        [InlineKeyboardButton("❌ Отмена", callback_data="admin_panel")],
     ])
 
 
@@ -190,9 +170,10 @@ def extra_delete_kb(items):
 def bot_settings_kb():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("🔁 Изменить смену", callback_data="a_shift")],
+        [InlineKeyboardButton("⚙️ Настроить Расписание", callback_data="a_sched_menu")],
         [InlineKeyboardButton("📝 Изменить группу", callback_data="a_set_group")],
         [InlineKeyboardButton("✏️ Изменить название бота", callback_data="a_set_botname")],
-        [InlineKeyboardButton("🖼️ Изменить картинку бота", callback_data="a_set_botphoto")],
+        [InlineKeyboardButton("🖼 Изменить картинку бота", callback_data="a_set_botphoto")],
         [InlineKeyboardButton("🔙 Назад", callback_data="admin_panel")],
     ])
 
@@ -214,9 +195,11 @@ def delete_ann_kb(anns):
         return None
     buttons = []
     for idx, item in enumerate(anns, start=1):
-        ann_id, text = item[0], item[1]
+        ann_id = item[0]
         is_note = item[3] if len(item) > 3 else False
-        prefix = "📝 " if is_note else ""
+        has_photo = len(item) > 4 and item[4]
+        prefix = "📝 " if is_note else ("📎 " if has_photo else "")
+        text = item[1] or "(без текста)"
         short = text[:28] + "..." if len(text) > 28 else text
         buttons.append([InlineKeyboardButton(f"{idx}. {prefix}{short}", callback_data=f"delann_{ann_id}")])
     buttons.append([InlineKeyboardButton("🔙 Назад", callback_data="admin_panel")])
@@ -235,35 +218,27 @@ def delete_admin_kb(admins, current_user_id, initial_admin_id):
     return InlineKeyboardMarkup(buttons)
 
 
-def pre_holiday_list_kb(items, action_prefix):
-    if not items:
-        return None
-    buttons = [[InlineKeyboardButton(date, callback_data=f"{action_prefix}_{ph_id}")] for ph_id, date in items]
-    buttons.append([InlineKeyboardButton("🔙 Назад", callback_data="admin_panel")])
-    return InlineKeyboardMarkup(buttons)
-
-
 # ---------- РЕДАКТОР РАСПИСАНИЯ ----------
 def schedule_edit_menu_kb():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("📤 Загрузить из Excel", callback_data="sched_upload")],
         [InlineKeyboardButton("📝 Редактировать по дням", callback_data="sched_by_day")],
         [InlineKeyboardButton("🗑 Удалить все пары на день", callback_data="a_del_all_day")],
-        [InlineKeyboardButton("❌ Отмена", callback_data="admin_panel")],
+        [InlineKeyboardButton("🔙 Назад", callback_data="a_bot_settings")],
     ])
 
 
 def delete_all_day_kb():
     buttons = [[InlineKeyboardButton(WEEKDAYS_RU[i].capitalize(), callback_data=f"delallday_{i}")]
                for i in range(6)]
-    buttons.append([InlineKeyboardButton("🔙 Назад", callback_data="admin_panel")])
+    buttons.append([InlineKeyboardButton("🔙 Назад", callback_data="a_sched_menu")])
     return InlineKeyboardMarkup(buttons)
 
 
 def weekday_choice_kb():
     buttons = [[InlineKeyboardButton(WEEKDAYS_RU[i].capitalize(), callback_data=f"schedday_{i}")]
                for i in range(6)]
-    buttons.append([InlineKeyboardButton("🔙 Назад", callback_data="admin_panel")])
+    buttons.append([InlineKeyboardButton("🔙 Назад", callback_data="a_sched_menu")])
     return InlineKeyboardMarkup(buttons)
 
 

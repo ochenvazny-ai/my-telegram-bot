@@ -50,7 +50,6 @@ async def handle_menu_reply_button(update: Update, context: ContextTypes.DEFAULT
 
 
 async def _send_image(update: Update, context: ContextTypes.DEFAULT_TYPE, kind: str, fallback_render, back_to: str):
-    """Универсальная отправка картинки из кэша (или генерация на лету + сохранение)."""
     query = update.callback_query
     cached = await asyncio.to_thread(db.get_image, kind)
     if not cached:
@@ -109,11 +108,39 @@ async def main_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 
 async def show_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Замены: текст присылается новым сообщением, главное меню — отдельным ниже."""
     query = update.callback_query
     await query.answer()
-    await query.edit_message_text("Загружаю расписание...")
+    user_id = update.effective_user.id
+    admin = await asyncio.to_thread(db.is_admin, user_id)
+    # Удаляем сообщение с кнопкой «Замены» (чтобы не висело)
+    try:
+        await query.delete_message()
+    except Exception:
+        pass
+    # Сразу показываем «Загружаю...» временным сообщением
+    loading = await context.bot.send_message(
+        chat_id=update.effective_chat.id,
+        text="⏳ Загружаю замены...",
+    )
     text, ok = await sched.get_schedule_for_display()
-    await query.edit_message_text(text, parse_mode='HTML', reply_markup=kb.back_button())
+    # Удаляем «Загружаю...»
+    try:
+        await loading.delete()
+    except Exception:
+        pass
+    # Присылаем расписание отдельным сообщением
+    await context.bot.send_message(
+        chat_id=update.effective_chat.id,
+        text=text,
+        parse_mode='HTML',
+    )
+    # И отдельным сообщением — главное меню
+    await context.bot.send_message(
+        chat_id=update.effective_chat.id,
+        text="Главное меню:",
+        reply_markup=kb.main_menu_kb(admin),
+    )
 
 
 async def show_hw(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -133,20 +160,61 @@ async def show_hw(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def show_announcements(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Объявления: каждое — отдельным сообщением (фото или текст), потом меню."""
     query = update.callback_query
     await query.answer()
-    await query.edit_message_text("Загружаю объявления...")
+    user_id = update.effective_user.id
+    admin = await asyncio.to_thread(db.is_admin, user_id)
+    try:
+        await query.delete_message()
+    except Exception:
+        pass
+    loading = await context.bot.send_message(
+        chat_id=update.effective_chat.id,
+        text="⏳ Загружаю объявления...",
+    )
     anns = await asyncio.to_thread(db.get_active_announcements)
+    try:
+        await loading.delete()
+    except Exception:
+        pass
+
     if not anns:
-        text = "📭 Активных объявлений нет."
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text="📭 Активных объявлений нет.",
+        )
     else:
-        lines = ["📢 Объявления:\n"]
-        for idx, (_, ann_text, created_at, is_note) in enumerate(anns, start=1):
+        for idx, (_, ann_text, created_at, is_note, photo_id) in enumerate(anns, start=1):
             date_part = created_at.split(" ")[0] if created_at else ""
             prefix = "📝 " if is_note else ""
-            lines.append(f"{idx}️⃣ {prefix}{date_part}: {ann_text}")
-        text = "\n".join(lines)
-    await query.edit_message_text(text, reply_markup=kb.back_button())
+            header = f"{idx}️⃣ {prefix}{date_part}"
+            # Если есть фото — присылаем фото с подписью
+            if photo_id:
+                caption = f"{header}\n{ann_text}" if ann_text else f"{header}"
+                try:
+                    await context.bot.send_photo(
+                        chat_id=update.effective_chat.id,
+                        photo=photo_id,
+                        caption=caption,
+                    )
+                except Exception:
+                    logger.exception("Не удалось отправить фото объявления %s", idx)
+                    await context.bot.send_message(
+                        chat_id=update.effective_chat.id,
+                        text=f"{header}\n{ann_text}",
+                    )
+            else:
+                await context.bot.send_message(
+                    chat_id=update.effective_chat.id,
+                    text=f"{header}\n{ann_text}",
+                )
+
+    await context.bot.send_message(
+        chat_id=update.effective_chat.id,
+        text="Главное меню:",
+        reply_markup=kb.main_menu_kb(admin),
+    )
 
 
 # ---- ДОП. ЗАНЯТИЯ ----
@@ -197,35 +265,35 @@ async def extra_class_open(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.answer("❌ Занятие не найдено.", show_alert=True)
         return
     _id, subject, description, photo_id = rec
-    caption_parts = [f"📚 <b>{subject}</b>"]
-    if description:
-        caption_parts.append(description)
-    caption = "\n\n".join(caption_parts)
-    try:
-        if photo_id:
+    # Описание всегда показываем отдельным сообщением, фото — отдельным
+    if photo_id:
+        try:
             await context.bot.send_photo(
                 chat_id=update.effective_chat.id,
                 photo=photo_id,
-                caption=caption,
-                parse_mode='HTML',
                 reply_markup=kb.back_button("menu_extra"),
             )
-        else:
+        except Exception:
+            logger.exception("Не удалось отправить фото доп. занятия")
+    if description:
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text=f"📚 <b>{subject}</b>\n\n{description}",
+            parse_mode='HTML',
+            reply_markup=kb.back_button("menu_extra") if not photo_id else None,
+        )
+    else:
+        if not photo_id:
             await context.bot.send_message(
                 chat_id=update.effective_chat.id,
-                text=caption,
+                text=f"📚 <b>{subject}</b>",
                 parse_mode='HTML',
                 reply_markup=kb.back_button("menu_extra"),
             )
-        try:
-            await query.delete_message()
-        except Exception:
-            pass
+    try:
+        await query.delete_message()
     except Exception:
-        logger.exception("Не удалось отправить доп. занятие %s", item_id)
-        await query.edit_message_text(
-            "❌ Не удалось показать занятие.", reply_markup=kb.back_button()
-        )
+        pass
 
 
 async def show_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -252,7 +320,6 @@ async def show_bells_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def show_bells_regular(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Сразу показывает картинку с А и Б корпусом (объединены)."""
     query = update.callback_query
     await query.answer()
     await _send_image(
