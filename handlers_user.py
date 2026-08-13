@@ -2,7 +2,8 @@ import logging
 import asyncio
 import io
 from telegram import Update
-from telegram.ext import ContextTypesimport database as db
+from telegram.ext import ContextTypes
+import database as db
 import keyboards as kb
 import schedule_service as sched
 import schedule_image as sched_img
@@ -23,16 +24,15 @@ INFO_TEXT = (
 )
 
 
-async def _greeting_text() -> str:
+async def _greeting_text():
     group = await asyncio.to_thread(db.get_group_name)
     return INFO_TEXT.format(group=group)
 
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def start(update, context):
     user = update.effective_user
     await asyncio.to_thread(db.upsert_user, user.id, user.username, user.first_name)
     admin = await asyncio.to_thread(db.is_admin, user.id)
-    # Проверяем, есть ли display_name — если нет, онбординг
     settings = await asyncio.to_thread(db.get_user_settings_row, user.id)
     if not settings.get("display_name"):
         await update.message.reply_text(
@@ -41,15 +41,15 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "Просто напиши своё имя или ник:",
             reply_markup=kb.skip_name_kb(),
         )
-        return    await update.message.reply_text(
+        return
+    await update.message.reply_text(
         await _greeting_text(),
         reply_markup=kb.main_menu_kb(admin),
     )
     await update.message.reply_text("Меню:", reply_markup=kb.reply_menu_button())
 
 
-async def start_set_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Онбординг: юзер вводит имя."""
+async def start_set_name(update, context):
     name = update.message.text.strip()[:40]
     if not name:
         await update.message.reply_text("Имя пустое. Попробуй ещё раз:")
@@ -65,8 +65,7 @@ async def start_set_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Меню:", reply_markup=kb.reply_menu_button())
 
 
-async def start_skip_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Онбординг: юзер пропустил имя — оставляем first_name из Telegram."""
+async def start_skip_name(update, context):
     query = update.callback_query
     await query.answer()
     user = update.effective_user
@@ -85,23 +84,23 @@ async def start_skip_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await context.bot.send_message(chat_id=update.effective_chat.id, text="Меню:", reply_markup=kb.reply_menu_button())
 
 
-async def my_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def my_id(update, context):
     await update.message.reply_text(f"🆔 Ваш ID: `{update.effective_user.id}`", parse_mode='Markdown')
 
 
-async def handle_menu_reply_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def handle_menu_reply_button(update, context):
     if update.message.text == "📋 Меню":
         await start(update, context)
 
 
-async def main_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def main_menu_callback(update, context):
     query = update.callback_query
     await query.answer()
     if query.message and query.message.photo:
         try:
             await query.message.delete()
         except Exception:
-            logger.exception("Не удалось удалить сообщение с изображением")
+            logger.exception("del photo")
         user_id = update.effective_user.id
         admin = await asyncio.to_thread(db.is_admin, user_id)
         text = await _greeting_text()
@@ -115,8 +114,7 @@ async def main_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await query.edit_message_text(text, reply_markup=kb.main_menu_kb(admin))
 
 
-# ===== ГЛАВНОЕ МЕНЮ: "📅 Замены" =====
-async def show_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def show_schedule(update, context):
     query = update.callback_query
     await query.answer()
     user_id = update.effective_user.id
@@ -134,15 +132,14 @@ async def show_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         await sched.check_and_broadcast_new_replacements(user_id)
     except Exception:
-        logger.exception("check_and_broadcast_new_replacements failed")
+        logger.exception("broadcast failed")
     await context.bot.send_message(chat_id=update.effective_chat.id, text=text, parse_mode='HTML')
     await context.bot.send_message(
         chat_id=update.effective_chat.id, text="Главное меню:", reply_markup=kb.main_menu_kb(admin)
     )
 
 
-# ===== ГЛАВНОЕ МЕНЮ: "📚 Домашка" =====
-async def show_hw(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def show_hw(update, context):
     query = update.callback_query
     await query.answer()
     await query.edit_message_text("Загружаю список...")
@@ -158,8 +155,7 @@ async def show_hw(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.edit_message_text(text, reply_markup=kb.back_button())
 
 
-# ===== ГЛАВНОЕ МЕНЮ: "📢 Объявления" =====
-async def show_announcements(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def show_announcements(update, context):
     query = update.callback_query
     await query.answer()
     anns = await asyncio.to_thread(db.get_active_announcements)
@@ -176,8 +172,7 @@ async def show_announcements(update: Update, context: ContextTypes.DEFAULT_TYPE)
     await query.edit_message_text(text, reply_markup=kb.back_button())
 
 
-# ===== ГЛАВНОЕ МЕНЮ: "📚 Доп. занятия" =====
-async def show_extra_classes(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def show_extra_classes(update, context):
     query = update.callback_query
     await query.answer()
     items = await asyncio.to_thread(db.get_active_extra_classes)
@@ -185,7 +180,7 @@ async def show_extra_classes(update: Update, context: ContextTypes.DEFAULT_TYPE)
         try:
             await query.message.delete()
         except Exception:
-            logger.exception("Не удалось удалить сообщение с фото")
+            logger.exception("del photo")
         if not items:
             await context.bot.send_message(
                 chat_id=update.effective_chat.id,
@@ -205,15 +200,13 @@ async def show_extra_classes(update: Update, context: ContextTypes.DEFAULT_TYPE)
     await query.edit_message_text("📚 Дополнительные занятия. Выберите:", reply_markup=kb.extra_classes_list_kb(items))
 
 
-async def extra_class_open(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def extra_class_open(update, context):
     query = update.callback_query
     await query.answer()
     try:
         item_id = int(query.data.split("_")[2])
     except (ValueError, IndexError):
-        logger.warning("Bad callback_data: %s", query.data)
-        return
-    rec = await asyncio.to_thread(db.get_extra_class, item_id)
+        return rec = await asyncio.to_thread(db.get_extra_class, item_id)
     if not rec:
         await query.answer("❌ Занятие не найдено.", show_alert=True)
         return
@@ -222,7 +215,7 @@ async def extra_class_open(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             await context.bot.send_photo(chat_id=update.effective_chat.id, photo=photo_id)
         except Exception:
-            logger.exception("Не удалось отправить фото доп. занятия")
+            logger.exception("photo send")
     if description:
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
@@ -243,15 +236,14 @@ async def extra_class_open(update: Update, context: ContextTypes.DEFAULT_TYPE):
         pass
 
 
-# ===== ГЛАВНОЕ МЕНЮ: "ℹ️ Учебная инфа" =====
-async def show_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def show_info(update, context):
     query = update.callback_query
     await query.answer()
     if query.message and query.message.photo:
         try:
             await query.message.delete()
         except Exception:
-            logger.exception("Не удалось удалить сообщение с фото")
+            logger.exception("del photo")
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
             text="ℹ️ Учебная инфа. Выберите раздел:",
@@ -261,14 +253,14 @@ async def show_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.edit_message_text("ℹ️ Учебная инфа. Выберите раздел:", reply_markup=kb.info_menu_kb())
 
 
-async def show_bells_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def show_bells_menu(update, context):
     query = update.callback_query
     await query.answer()
     if query.message and query.message.photo:
         try:
             await query.message.delete()
         except Exception:
-            logger.exception("Не удалось удалить сообщение с фото")
+            logger.exception("del photo")
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
             text="📞 Расписание звонков. Выберите тип дня:",
@@ -278,7 +270,7 @@ async def show_bells_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.edit_message_text("📞 Расписание звонков. Выберите тип дня:", reply_markup=kb.bells_choice_kb())
 
 
-async def show_bells_regular(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def show_bells_regular(update, context):
     query = update.callback_query
     await query.answer()
     kind = "bells_reg"
@@ -309,7 +301,7 @@ async def show_bells_regular(update: Update, context: ContextTypes.DEFAULT_TYPE)
         pass
 
 
-async def show_bells_preholiday(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def show_bells_preholiday(update, context):
     query = update.callback_query
     await query.answer()
     kind = "bells_pre"
@@ -340,14 +332,14 @@ async def show_bells_preholiday(update: Update, context: ContextTypes.DEFAULT_TY
         pass
 
 
-async def show_sched_img_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def show_sched_img_menu(update, context):
     query = update.callback_query
     await query.answer()
     if query.message and query.message.photo:
         try:
             await query.message.delete()
         except Exception:
-            logger.exception("Не удалось удалить сообщение с фото")
+            logger.exception("del photo")
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
             text="📚 Расписание пар. Выберите вариант:",
@@ -357,7 +349,7 @@ async def show_sched_img_menu(update: Update, context: ContextTypes.DEFAULT_TYPE
     await query.edit_message_text("📚 Расписание пар. Выберите вариант:", reply_markup=kb.schedule_img_choice_kb())
 
 
-async def send_schedule_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def send_schedule_image(update, context):
     query = update.callback_query
     await query.answer()
     choice = query.data
@@ -369,7 +361,7 @@ async def send_schedule_image(update: Update, context: ContextTypes.DEFAULT_TYPE
     cached = await asyncio.to_thread(db.get_image, kind)
     if not cached:
         try:
-            await query.edit_message_text("⏳ Готовлю изображение (первый раз)...")
+            await query.edit_message_text("⏳ Готовлю изображение...")
         except Exception:
             pass
         try:
@@ -398,8 +390,7 @@ async def send_schedule_image(update: Update, context: ContextTypes.DEFAULT_TYPE
         pass
 
 
-# ===== ЛИЧНЫЙ КАБИНЕТ =====
-async def show_cabinet(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def show_cabinet(update, context):
     query = update.callback_query
     await query.answer()
     user_id = update.effective_user.id
@@ -409,7 +400,6 @@ async def show_cabinet(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ann = "✅" if s.get("notify_announcements") else "❌"
     hw = "✅" if s.get("notify_homework") else "❌"
     ec = "✅" if s.get("notify_extra_classes") else "❌"
-
     text = (
         f"👤 <b>Личный кабинет</b>\n\n"
         f"Имя в боте: <b>{name}</b>\n\n"
@@ -422,17 +412,14 @@ async def show_cabinet(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.edit_message_text(text, parse_mode='HTML', reply_markup=kb.cabinet_menu_kb())
 
 
-async def cabinet_change_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Юзер нажал «Изменить имя» — ждём ввода текста."""
+async def cabinet_change_name(update, context):
     query = update.callback_query
     await query.answer()
     context.user_data['cabinet_state'] = 'awaiting_name'
-    await query.edit_message_text(
-        "Введите новое имя для бота:", reply_markup=kb.back_button("cabinet")
-    )
+    await query.edit_message_text("Введите новое имя для бота:", reply_markup=kb.back_button("cabinet"))
 
 
-async def cabinet_save_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def cabinet_save_name(update, context):
     if context.user_data.get('cabinet_state') != 'awaiting_name':
         return
     name = update.message.text.strip()[:40]
@@ -442,7 +429,6 @@ async def cabinet_save_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await asyncio.to_thread(db.set_user_display_name, update.effective_user.id, name)
     context.user_data.pop('cabinet_state', None)
     await update.message.reply_text(f"✅ Имя изменено на «{name}».")
-    # Возвращаем в кабинет
     user_id = update.effective_user.id
     s = await asyncio.to_thread(db.get_user_settings_row, user_id)
     name_disp = s.get("display_name") or "не задано"
@@ -462,13 +448,11 @@ async def cabinet_save_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(text, parse_mode='HTML', reply_markup=kb.cabinet_menu_kb())
 
 
-async def cabinet_toggle_notify(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def cabinet_toggle_notify(update, context):
     query = update.callback_query
     await query.answer()
-    # kind_on: 'replacements', 'announcements', 'homework', 'extra_classes'
-    kind = query.data.split("_")[1]  # 'toggle_replacements' -> 'replacements'
+    kind = query.data.split("_")[1]
     user_id = update.effective_user.id
-    s = await asyncio.to_thread(db.get_user_settings_row, user_id)
     col_map = {
         "replacements": "notify_replacements",
         "announcements": "notify_announcements",
@@ -478,10 +462,10 @@ async def cabinet_toggle_notify(update: Update, context: ContextTypes.DEFAULT_TY
     col = col_map.get(kind)
     if not col:
         return
+    s = await asyncio.to_thread(db.get_user_settings_row, user_id)
     current = bool(s.get(col))
     new_val = not current
     await asyncio.to_thread(db.set_user_notify, user_id, kind, new_val)
-    # Обновляем кабинет
     s = await asyncio.to_thread(db.get_user_settings_row, user_id)
     name_disp = s.get("display_name") or "не задано"
     repl = "✅" if s.get("notify_replacements") else "❌"
@@ -500,24 +484,23 @@ async def cabinet_toggle_notify(update: Update, context: ContextTypes.DEFAULT_TY
     await query.edit_message_text(text, parse_mode='HTML', reply_markup=kb.cabinet_menu_kb())
 
 
-# ===== ДОЛГИ / ЗАМЕТКИ =====
-async def cabinet_open_debts(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def cabinet_open_debts(update, context):
     query = update.callback_query
     await query.answer()
     notes = await asyncio.to_thread(db.get_user_notes, update.effective_user.id, 'debt')
     if not notes:
         text = "💸 У тебя нет долгов. Добавь первый:"
- else:
+    else:
         lines = ["💸 <b>Мои долги:</b>\n"]
         for idx, (note_id, title, content, is_done, _) in enumerate(notes, start=1):
             mark = "✅" if is_done else "❗"
             short_title = (title[:30] + "...") if len(title) > 30 else title
             lines.append(f"{idx}️⃣ {mark} {short_title}")
         text = "\n".join(lines)
-    await query.edit_message_text(text, parse_mode='HTML', reply_markup=kb.cabinet_notes_kb('debt'))
+    await query.edit_message_text(text, parse_mode='HTML', reply_markup=kb.cabinet_notes_with_items_kb('debt', notes))
 
 
-async def cabinet_open_notes(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def cabinet_open_notes(update, context):
     query = update.callback_query
     await query.answer()
     notes = await asyncio.to_thread(db.get_user_notes, update.effective_user.id, 'note')
@@ -527,27 +510,25 @@ async def cabinet_open_notes(update: Update, context: ContextTypes.DEFAULT_TYPE)
         lines = ["📝 <b>Мои заметки:</b>\n"]
         for idx, (note_id, title, content, is_done, _) in enumerate(notes, start=1):
             mark = "✅" if is_done else "❗"
-            short_title = (title[:30] + "...") if len(title) > 30 else title
-            lines.append(f"{idx}️⃣ {mark} {short_title}")
+            short_title = (title[:30] + "...") if len(title) > 30 else title lines.append(f"{idx}️⃣ {mark} {short_title}")
         text = "\n".join(lines)
-    await query.edit_message_text(text, parse_mode='HTML', reply_markup=kb.cabinet_notes_kb('note'))
+    await query.edit_message_text(text, parse_mode='HTML', reply_markup=kb.cabinet_notes_with_items_kb('note', notes))
 
 
-async def cabinet_add_note_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Юзер нажал «Добавить долг/заметку» — ждём ввода текста."""
+async def cabinet_add_note_start(update, context):
     query = update.callback_query
     await query.answer()
-    # callback_data = 'addnote_debt' или 'addnote_note'
     kind = query.data.split("_")[1]
     context.user_data['cabinet_note_state'] = 'awaiting_title'
     context.user_data['cabinet_note_kind'] = kind
     label = "долг" if kind == 'debt' else "заметку"
+    back = "cabinet_open_debts" if kind == 'debt' else "cabinet_open_notes"
     await query.edit_message_text(
-        f"Введите название {label}а:", reply_markup=kb.back_button(f"cabinet_open_{'debts' if kind == 'debt' else 'notes'}")
+        f"Введите название {label}а:", reply_markup=kb.back_button(back)
     )
 
 
-async def cabinet_add_note_title(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def cabinet_add_note_title(update, context):
     if context.user_data.get('cabinet_note_state') != 'awaiting_title':
         return
     title = update.message.text.strip()[:80]
@@ -558,49 +539,42 @@ async def cabinet_add_note_title(update: Update, context: ContextTypes.DEFAULT_T
     context.user_data['cabinet_note_state'] = 'awaiting_content'
     kind = context.user_data['cabinet_note_kind']
     label = "долга" if kind == 'debt' else "заметки"
+    back = "cabinet_open_debts" if kind == 'debt' else "cabinet_open_notes"
     await update.message.reply_text(
-        f"Теперь введите содержимое {label} (или «-» чтобы без описания):",
-        reply_markup=kb.back_button(f"cabinet_open_{'debts' if kind == 'debt' else 'notes'}")
+        f"Теперь введите содержимое {label} (или «-» без описания):",
+        reply_markup=kb.back_button(back)
     )
 
 
-async def cabinet_add_note_content(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def cabinet_add_note_content(update, context):
     if context.user_data.get('cabinet_note_state') != 'awaiting_content':
         return
     content_text = update.message.text.strip()
-    if content_text == '-':
-        content = None
-    else:
-        content = content_text
+    content = None if content_text == '-' else content_text
     kind = context.user_data.get('cabinet_note_kind')
     title = context.user_data.get('cabinet_note_title')
     context.user_data.clear()
     note_id = await asyncio.to_thread(db.add_user_note, update.effective_user.id, kind, title, content)
-    if note_id:
-        await update.message.reply_text(f"✅ Добавлено.")
-        # Возвращаем в список notes = await asyncio.to_thread(db.get_user_notes, update.effective_user.id, kind)
-        if not notes:
-            text = "Пусто."
-        else:
-            lines = [("<b>Мои долги:</b>\n" if kind == 'debt' else "<b>Мои заметки:</b>\n")]
-            for idx, (n_id, ttl, cont, is_done, _) in enumerate(notes, start=1):
-                mark = "✅" if is_done else "❗"
-                short_title = (ttl[:30] + "...") if len(ttl) > 30 else ttl
-                lines.append(f"{idx}️⃣ {mark} {short_title}")
-            text = "\n".join(lines)
-        await update.message.reply_text(
-            text, parse_mode='HTML',
-            reply_markup=kb.cabinet_notes_kb(kind)
-        )
-    else:
+    if not note_id:
         await update.message.reply_text("❌ Ошибка.")
+        return
+    notes = await asyncio.to_thread(db.get_user_notes, update.effective_user.id, kind)
+    if not notes:
+        text = "Пусто."
+    else:
+        header = "<b>Мои долги:</b>\n" if kind == 'debt' else "<b>Мои заметки:</b>\n"
+        lines = [header]
+        for idx, (n_id, ttl, cont, dn, _) in enumerate(notes, start=1):
+            mark = "✅" if dn else "❗"
+            short_title = (ttl[:30] + "...") if len(ttl) > 30 else ttl
+            lines.append(f"{idx}️⃣ {mark} {short_title}")
+        text = "\n".join(lines)
+    await update.message.reply_text(text, parse_mode='HTML', reply_markup=kb.cabinet_notes_with_items_kb(kind, notes))
 
 
-async def cabinet_view_note(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Юзер выбрал конкретный долг/заметку."""
+async def cabinet_view_note(update, context):
     query = update.callback_query
     await query.answer()
-    # viewnote_<id>
     try:
         note_id = int(query.data.split("_")[1])
     except (ValueError, IndexError):
@@ -617,10 +591,9 @@ async def cabinet_view_note(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
-async def cabinet_toggle_note_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def cabinet_toggle_note_done(update, context):
     query = update.callback_query
     await query.answer()
-    # donenote_<id>
     try:
         note_id = int(query.data.split("_")[1])
     except (ValueError, IndexError):
@@ -629,26 +602,25 @@ async def cabinet_toggle_note_done(update: Update, context: ContextTypes.DEFAULT
     if not rec or rec[1] != update.effective_user.id:
         await query.answer("❌ Не найдено.", show_alert=True)
         return
-    _, _, kind, title, content, is_done = rec
+    _, _, kind, _, _, is_done = rec
     await asyncio.to_thread(db.set_user_note_done, note_id, not is_done)
-    # Возвращаем в список
     notes = await asyncio.to_thread(db.get_user_notes, update.effective_user.id, kind)
     if not notes:
         text = "Пусто."
     else:
-        lines = [("<b>Мои долги:</b>\n" if kind == 'debt' else "<b>Мои заметки:</b>\n")]
+        header = "<b>Мои долги:</b>\n" if kind == 'debt' else "<b>Мои заметки:</b>\n"
+        lines = [header]
         for idx, (n_id, ttl, cont, dn, _) in enumerate(notes, start=1):
             mark = "✅" if dn else "❗"
             short_title = (ttl[:30] + "...") if len(ttl) > 30 else ttl
             lines.append(f"{idx}️⃣ {mark} {short_title}")
         text = "\n".join(lines)
-    await query.edit_message_text(text, parse_mode='HTML', reply_markup=kb.cabinet_notes_kb(kind))
+    await query.edit_message_text(text, parse_mode='HTML', reply_markup=kb.cabinet_notes_with_items_kb(kind, notes))
 
 
-async def cabinet_delete_note(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def cabinet_delete_note(update, context):
     query = update.callback_query
     await query.answer()
-    # delnote_<id>
     try:
         note_id = int(query.data.split("_")[1])
     except (ValueError, IndexError):
@@ -663,9 +635,11 @@ async def cabinet_delete_note(update: Update, context: ContextTypes.DEFAULT_TYPE
     if not notes:
         text = "Пусто."
     else:
-        lines = [("<b>Мои долги:</b>\n" if kind == 'debt' else "<b>Мои заметки:</b>\n")]
+        header = "<b>Мои долги:</b>\n" if kind == 'debt' else "<b>Мои заметки:</b>\n"
+        lines = [header]
         for idx, (n_id, ttl, cont, dn, _) in enumerate(notes, start=1):
             mark = "✅" if dn else "❗"
-            short_title = (ttl[:30] + "...") if len(ttl) > 30 else ttl lines.append(f"{idx}️⃣ {mark} {short_title}")
+            short_title = (ttl[:30] + "...") if len(ttl) > 30 else ttl
+            lines.append(f"{idx}️⃣ {mark} {short_title}")
         text = "\n".join(lines)
-    await query.edit_message_text(text, parse_mode='HTML', reply_markup=kb.cabinet_notes_kb(kind))
+    await query.edit_message_text(text, parse_mode='HTML', reply_markup=kb.cabinet_notes_with_items_kb(kind, notes))
