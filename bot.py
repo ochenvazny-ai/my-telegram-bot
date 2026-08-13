@@ -162,11 +162,9 @@ def main():
     application = Application.builder().token(BOT_TOKEN).build()
     application.add_error_handler(error_handler)
 
-    # Команды
     application.add_handler(CommandHandler("start", hu.start))
     application.add_handler(CommandHandler("myid", hu.my_id))
 
-    # Диалоги — до общих callback-хендлеров
     for conv in build_conversations():
         application.add_handler(conv)
 
@@ -181,8 +179,6 @@ def main():
 
     application.add_handler(CallbackQueryHandler(hu.show_bells_menu, pattern="^info_bells$"))
     application.add_handler(CallbackQueryHandler(hu.show_bells_regular, pattern="^bells_regular$"))
-    application.add_handler(CallbackQueryHandler(hu.show_bells_regular_a, pattern="^bells_regular_a$"))
-    application.add_handler(CallbackQueryHandler(hu.show_bells_regular_b, pattern="^bells_regular_b$"))
     application.add_handler(CallbackQueryHandler(hu.show_bells_preholiday, pattern="^bells_preholiday$"))
     application.add_handler(CallbackQueryHandler(hu.show_sched_img_menu, pattern="^info_sched_img$"))
     application.add_handler(CallbackQueryHandler(hu.send_schedule_image, pattern="^schedimg_(num|den|cmp)$"))
@@ -220,13 +216,11 @@ def main():
     application.add_handler(CallbackQueryHandler(ha.del_admin_confirm, pattern="^confirm_deladmin_\\d+$"))
     application.add_handler(CallbackQueryHandler(ha.view_admins, pattern="^a_view_admins$"))
 
-    # Доп. занятия (админ)
     application.add_handler(CallbackQueryHandler(ha.extra_del_list, pattern="^a_del_extra$"))
     application.add_handler(CallbackQueryHandler(ha.extra_del_pick, pattern="^delextra_\\d+$"))
     application.add_handler(CallbackQueryHandler(ha.extra_del_confirm, pattern="^confirm_delextra_\\d+$"))
     application.add_handler(CallbackQueryHandler(ha.extra_view, pattern="^a_view_extra$"))
 
-    # Расписание (админ)
     application.add_handler(CallbackQueryHandler(ha.edit_schedule_menu, pattern="^a_sched_menu$"))
     application.add_handler(CallbackQueryHandler(ha.del_all_day_menu, pattern="^a_del_all_day$"))
     application.add_handler(CallbackQueryHandler(ha.sched_by_day_start, pattern="^sched_by_day$"))
