@@ -32,11 +32,15 @@ COLOR_HEADER_TEXT = (20, 20, 20)
 COLOR_ROW_EVEN = (255, 255, 255)
 COLOR_ROW_ODD = (245, 246, 247)
 COLOR_TEXT = (20, 20, 20)
-COLOR_ORANGE = (211, 84, 0)
 COLOR_TITLE = (20, 20, 20)
 
+# Новая палитра
+COLOR_NUM = (198, 40, 40)        # Числитель — красный
+COLOR_DEN = (30, 80, 180)        # Знаменатель — синий
+COLOR_MATCH = (30, 140, 60)      # Совпадение в сравнении — зелёный
 
-# ---------- Шрифты (гарантированный источник — matplotlib, см. предыдущий фикс) ----------
+
+# ---------- Шрифты ----------
 def _find_cyrillic_font_path(bold: bool) -> str | None:
     candidates = [
         "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf" if bold else
@@ -56,15 +60,12 @@ def _find_cyrillic_font_path(bold: bool) -> str | None:
         if os.path.exists(mpl_font):
             return mpl_font
     except Exception:
-        logger.exception("matplotlib недоступен для получения шрифта с кириллицей")
+        logger.exception("matplotlib недоступен для получения шрифта")
     return None
 
 
 _FONT_PATH_REGULAR = _find_cyrillic_font_path(bold=False)
 _FONT_PATH_BOLD = _find_cyrillic_font_path(bold=True)
-
-if not _FONT_PATH_REGULAR:
-    logger.error("Не найден TTF-шрифт с поддержкой кириллицы — текст на картинках будет нечитаем.")
 
 
 def _font(size=12):
@@ -90,7 +91,7 @@ FONT_TITLE = _font_bold(18)
 FONT_DAY = _font_bold(14)
 FONT_HEADER = _font_bold(12)
 FONT_CELL = _font(12)
-FONT_CELL_ORANGE = _font(12)
+FONT_CELL_BOLD = _font_bold(12)
 
 
 def _wrap_lines(draw, text, font, max_width):
@@ -135,16 +136,16 @@ def _draw_lines_centered(draw, lines, font, x, y_top, height, width, color, alig
 
 
 def _get_day_data(week_type: str, day: int) -> dict:
-    """{pair_num(int): {subject, teacher, room}} только заполненные пары."""
     return db.get_base_schedule(week_type, day)
 
 
-# ==================== ОДИНОЧНОЕ РАСПИСАНИЕ (Числитель / Знаменатель) ====================
+# ==================== ОДИНОЧНОЕ РАСПИСАНИЕ ====================
 def render_schedule_image(week_type: str) -> bytes:
+    accent = COLOR_NUM if week_type == "Числитель" else COLOR_DEN
     measure_img = Image.new("RGB", (10, 10))
     md = ImageDraw.Draw(measure_img)
 
-    days_blocks = []  # (day_idx, [(pair_num, subject, teacher, room, row_h), ...])
+    days_blocks = []
     for day in range(6):
         pairs = _get_day_data(week_type, day)
         if not pairs:
@@ -200,10 +201,13 @@ def render_schedule_image(week_type: str) -> bytes:
         for idx, (pair_num, lines_s, lines_t, lines_r, row_h) in enumerate(rows):
             bg = COLOR_ROW_EVEN if idx % 2 == 0 else COLOR_ROW_ODD
             draw.rectangle([x0, y, x0 + TABLE_W, y + row_h], fill=bg, outline=COLOR_GRID)
+            # Номер пары — в цвете недели, жирный
             draw.text((col_x["num"] + 10, y + (row_h - LINE_H) // 2), str(pair_num),
-                       fill=COLOR_TEXT, font=FONT_CELL)
-            _draw_lines_centered(draw, lines_s, FONT_CELL, col_x["subject"] + 6, y, row_h,
-                                  COL_W["subject"] - 10, COLOR_TEXT)
+                       fill=accent, font=FONT_CELL_BOLD)
+            # Предмет — в цвете недели
+            _draw_lines_centered(draw, lines_s, FONT_CELL_BOLD, col_x["subject"] + 6, y, row_h,
+                                  COL_W["subject"] - 10, accent)
+            # Преподаватель и аудитория — нейтрально
             _draw_lines_centered(draw, lines_t, FONT_CELL, col_x["teacher"] + 6, y, row_h,
                                   COL_W["teacher"] - 10, COLOR_TEXT)
             _draw_lines_centered(draw, lines_r, FONT_CELL, col_x["room"] + 6, y, row_h,
@@ -229,15 +233,14 @@ def _render_empty_image(title: str, message: str) -> bytes:
     return buf.getvalue()
 
 
-# ==================== СРАВНЕНИЕ (Числитель vs Знаменатель) ====================
+# ==================== СРАВНЕНИЕ ====================
 def _cmp_field(md, num_val: str, den_val: str, max_width: int):
-    """Возвращает (equal, lines_num, lines_den, content_height)."""
     equal = (num_val or "") == (den_val or "")
     if equal:
         lines = _wrap_lines(md, num_val, FONT_CELL, max_width)
         return True, lines, lines, len(lines) * LINE_H
-    lines_num = _wrap_lines(md, num_val, FONT_CELL, max_width) if num_val else [""]
-    lines_den = _wrap_lines(md, den_val, FONT_CELL_ORANGE, max_width) if den_val else [""]
+    lines_num = _wrap_lines(md, num_val, FONT_CELL_BOLD, max_width) if num_val else [""]
+    lines_den = _wrap_lines(md, den_val, FONT_CELL_BOLD, max_width) if den_val else [""]
     h = len(lines_num) * LINE_H + SPLIT_GAP + len(lines_den) * LINE_H
     return False, lines_num, lines_den, h
 
@@ -282,11 +285,11 @@ def render_comparison_image() -> bytes:
     draw = ImageDraw.Draw(img)
 
     title = "Расписание — Сравнение"
-    subtitle = "(различия по знаменателю — оранжевым)"
+    subtitle = "Совпадения — зелёным, различия: числитель — красный, знаменатель — синий"
     tw = draw.textlength(title, font=FONT_TITLE)
     draw.text(((IMG_W - tw) // 2, MARGIN), title, fill=COLOR_TITLE, font=FONT_TITLE)
     sw = draw.textlength(subtitle, font=FONT_CELL)
-    draw.text(((IMG_W - sw) // 2, MARGIN + 22), subtitle, fill=COLOR_ORANGE, font=FONT_CELL)
+    draw.text(((IMG_W - sw) // 2, MARGIN + 22), subtitle, fill=COLOR_MATCH, font=FONT_CELL)
 
     y = MARGIN + TITLE_H * 2
     x0 = MARGIN
@@ -301,25 +304,25 @@ def render_comparison_image() -> bytes:
         cx = col_x[col_key] + 6
         cw = COL_W[col_key] - 10
         if eq:
-            _draw_lines_centered(draw, lines_num, FONT_CELL, cx, row_top, row_h, cw, COLOR_TEXT)
+            _draw_lines_centered(draw, lines_num, FONT_CELL_BOLD, cx, row_top, row_h, cw, COLOR_MATCH)
             return
         block_h = len(lines_num) * LINE_H + SPLIT_GAP + len(lines_den) * LINE_H
         y_start = row_top + max(0, (row_h - block_h) // 2)
         yy = y_start
+        # сверху — числитель (красный)
         for line in lines_num:
-            draw.text((cx, yy), line, fill=COLOR_TEXT, font=FONT_CELL)
+            draw.text((cx, yy), line, fill=COLOR_NUM, font=FONT_CELL_BOLD)
             yy += LINE_H
-        divider_y = yy + SPLIT_GAP // 2
         yy += SPLIT_GAP
         den_top = yy
         den_h = len(lines_den) * LINE_H
-        # тонкая оранжевая рамка вокруг значения знаменателя
+        # тонкая синяя рамка вокруг значения знаменателя
         draw.rectangle(
             [col_x[col_key] + 2, den_top - 2, col_x[col_key] + COL_W[col_key] - 2, den_top + den_h + 2],
-            outline=COLOR_ORANGE, width=1,
+            outline=COLOR_DEN, width=1,
         )
         for line in lines_den:
-            draw.text((cx, yy), line, fill=COLOR_ORANGE, font=FONT_CELL_ORANGE)
+            draw.text((cx, yy), line, fill=COLOR_DEN, font=FONT_CELL_BOLD)
             yy += LINE_H
 
     for day, rows in days_blocks:
@@ -340,7 +343,7 @@ def render_comparison_image() -> bytes:
             bg = COLOR_ROW_EVEN if idx % 2 == 0 else COLOR_ROW_ODD
             draw.rectangle([x0, y, x0 + TABLE_W, y + row_h], fill=bg, outline=COLOR_GRID)
             draw.text((col_x["num"] + 10, y + (row_h - LINE_H) // 2), str(row["pair_num"]),
-                       fill=COLOR_TEXT, font=FONT_CELL)
+                       fill=COLOR_TEXT, font=FONT_CELL_BOLD)
 
             eq_s, ls_num, ls_den = row["subject"]
             eq_t, lt_num, lt_den = row["teacher"]
@@ -354,3 +357,23 @@ def render_comparison_image() -> bytes:
     img.save(buf, format="PNG")
     buf.seek(0)
     return buf.getvalue()
+
+
+# ==================== ПРЕДГЕНЕРАЦИЯ КЭША ====================
+def regenerate_all_cached_images() -> dict[str, bool]:
+    """Генерит и сохраняет в БД все 3 PNG. Возвращает {kind: ok}."""
+    results = {}
+    for kind in ("num", "den", "cmp"):
+        try:
+            if kind == "num":
+                data = render_schedule_image("Числитель")
+            elif kind == "den":
+                data = render_schedule_image("Знаменатель")
+            else:
+                data = render_comparison_image()
+            db.save_image(kind, data)
+            results[kind] = True
+        except Exception:
+            logger.exception("regenerate_all_cached_images failed for %s", kind)
+            results[kind] = False
+    return results

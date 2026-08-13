@@ -7,7 +7,8 @@ def main_menu_kb(is_admin_user: bool):
         [InlineKeyboardButton("📅 Замены", callback_data="menu_zam")],
         [InlineKeyboardButton("📚 Домашка", callback_data="menu_hw")],
         [InlineKeyboardButton("📢 Объявления", callback_data="menu_ann")],
-        [InlineKeyboardButton("ℹ️ Инфо", callback_data="menu_info")],
+        [InlineKeyboardButton("📚 Доп. занятия", callback_data="menu_extra")],
+        [InlineKeyboardButton("ℹ️ Учебная инфа", callback_data="menu_info")],
     ]
     if is_admin_user:
         kb.append([InlineKeyboardButton("👑 Админка", callback_data="admin_panel")])
@@ -67,7 +68,25 @@ def schedule_img_choice_kb():
     ])
 
 
-# ---------- АДМИН-ПАНЕЛЬ (верхний уровень, сгруппированная) ----------
+# ---------- ДОП. ЗАНЯТИЯ (пользователь) ----------
+def extra_classes_list_kb(items):
+    buttons = []
+    for idx, item in enumerate(items, start=1):
+        item_id, subject = item[0], item[1]
+        short = subject[:30] + "..." if len(subject) > 30 else subject
+        buttons.append([InlineKeyboardButton(f"{idx}. {short}", callback_data=f"open_extra_{item_id}")])
+    buttons.append([InlineKeyboardButton("🔙 Назад", callback_data="main_menu")])
+    return InlineKeyboardMarkup(buttons)
+
+
+def extra_skip_photo_kb():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("⏭ Пропустить фото", callback_data="extra_skip_photo")],
+        [InlineKeyboardButton("❌ Отмена", callback_data="cancel_action")],
+    ])
+
+
+# ---------- АДМИН-ПАНЕЛЬ ----------
 def admin_panel_kb():
     kb = [
         [InlineKeyboardButton("🔁 Изменить смену", callback_data="a_shift")],
@@ -75,6 +94,8 @@ def admin_panel_kb():
         [InlineKeyboardButton("📢 Объявления", callback_data="a_ann_menu")],
         [InlineKeyboardButton("📅 Праздничный день", callback_data="a_ph_menu")],
         [InlineKeyboardButton("⚙️ Настроить Расписание", callback_data="a_sched_menu")],
+        [InlineKeyboardButton("📚 Доп. занятия", callback_data="a_extra_menu")],
+        [InlineKeyboardButton("⚙️ Настройки бота", callback_data="a_bot_settings")],
         [InlineKeyboardButton("👥 Админы", callback_data="a_admins_menu")],
         [InlineKeyboardButton("🔙 Главное меню", callback_data="main_menu")],
     ]
@@ -143,6 +164,36 @@ def replnote_confirm_kb():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("✅ Да, сохранить", callback_data="replnote_save_yes")],
         [InlineKeyboardButton("❌ Нет, отмена", callback_data="replnote_save_no")],
+    ])
+
+
+# ---------- ДОП. ЗАНЯТИЯ (админ) ----------
+def extra_admin_menu_kb():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("➕ Добавить занятие", callback_data="a_add_extra")],
+        [InlineKeyboardButton("❌ Удалить занятие", callback_data="a_del_extra")],
+        [InlineKeyboardButton("👀 Посмотреть занятия", callback_data="a_view_extra")],
+        [InlineKeyboardButton("🔙 Назад", callback_data="admin_panel")],
+    ])
+
+
+def extra_delete_kb(items):
+    buttons = []
+    for idx, item in enumerate(items, start=1):
+        item_id, subject = item[0], item[1]
+        short = subject[:30] + "..." if len(subject) > 30 else subject
+        buttons.append([InlineKeyboardButton(f"{idx}. {short}", callback_data=f"delextra_{item_id}")])
+    buttons.append([InlineKeyboardButton("🔙 Назад", callback_data="a_extra_menu")])
+    return InlineKeyboardMarkup(buttons)
+
+
+# ---------- НАСТРОЙКИ БОТА ----------
+def bot_settings_kb():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("📝 Изменить группу", callback_data="a_set_group")],
+        [InlineKeyboardButton("✏️ Изменить название бота", callback_data="a_set_botname")],
+        [InlineKeyboardButton("🖼️ Изменить картинку бота", callback_data="a_set_botphoto")],
+        [InlineKeyboardButton("🔙 Назад", callback_data="admin_panel")],
     ])
 
 

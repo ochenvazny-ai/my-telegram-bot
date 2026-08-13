@@ -1,41 +1,29 @@
--- ============================================================
--- Migration v4: users + admins tables + schedule_history cleanup
--- Выполнить в Supabase SQL Editor, если таблиц ещё нет
--- ============================================================
-
--- Пользователи бота
-create table if not exists public.users (
-  id bigint primary key,
-  username text,
-  first_name text,
-  created_at timestamptz default now()
-);
-alter table public.users enable row level security;
-create policy "Allow anon select" on public.users for select using (true);
-create policy "Allow anon insert" on public.users for insert with check (true);
-create policy "Allow anon update" on public.users for update using (true) with check (true);
-
--- Администраторы бота
-create table if not exists public.admins (
+-- Дополнительные занятия
+create table if not exists public.extra_classes (
   id serial primary key,
-  user_id bigint unique not null,
-  username text,
-  name text,
-  created_at timestamptz default now()
+  subject text not null,
+  description text,
+  photo_id text,
+  created_at timestamptz default now(),
+  is_active boolean default true
 );
-alter table public.admins enable row level security;
-create policy "Allow anon select" on public.admins for select using (true);
-create policy "Allow anon insert" on public.admins for insert with check (true);
-create policy "Allow anon update" on public.admins for update using (true) with check (true);
-create policy "Allow anon delete" on public.admins for delete using (true);
+alter table public.extra_classes enable row level security;
+create policy "Allow anon select" on public.extra_classes for select using (true);
+create policy "Allow anon insert" on public.extra_classes for insert with check (true);
+create policy "Allow anon update" on public.extra_classes for update using (true) with check (true);
 
--- Колонки username/name для admins (если таблица была создана раньше без них)
-alter table public.admins add column if not exists username text;
-alter table public.admins add column if not exists name text;
+-- Кэш готовых картинок расписания
+create table if not exists public.schedule_images (
+  kind text primary key,  -- 'num' | 'den' | 'cmp'
+  image_bytes bytea not null,
+  updated_at timestamptz default now()
+);
+alter table public.schedule_images enable row level security;
+create policy "Allow anon select" on public.schedule_images for select using (true);
+create policy "Allow anon upsert" on public.schedule_images for insert with check (true);
+create policy "Allow anon update" on public.schedule_images for update using (true) with check (true);
+create policy "Allow anon delete" on public.schedule_images for delete using (true);
 
--- Начальный админ (создатель бота) — раскомментировать и подставить свой ID
--- insert into public.admins (user_id, username, name) values (1207797393, 'id1207797393', 'Создатель')
--- on conflict (user_id) do nothing;
-
--- Индекс для быстрой очистки старого кэша расписания
-create index if not exists idx_schedule_history_date on public.schedule_history (date);
+-- Название группы
+insert into public.settings (key, value) values ('group_name', 'ИБ1-31')
+on conflict (key) do nothing;

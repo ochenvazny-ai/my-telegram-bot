@@ -1,5 +1,4 @@
 import os
-import sys
 import asyncio
 import logging
 import threading
@@ -13,9 +12,11 @@ from telegram.ext import (
 import database as db
 import handlers_user as hu
 import handlers_admin as ha
+import schedule_image as sched_img
 from config import (
     BOT_TOKEN, HW_TEXT, HW_DUE, ANN_TEXT, ANN_CONFIRM, REPLNOTE_TEXT, REPLNOTE_CONFIRM, PH_DATE,
     SCHED_UPLOAD_TEXT, SCHED_FIELD_VALUE, ADMIN_ID, ADMIN_NAME,
+    EXTRA_NAME, EXTRA_CONTENT, SET_GROUP, SET_BOT_NAME, SET_BOT_PHOTO,
 )
 
 logging.basicConfig(
@@ -29,7 +30,6 @@ async def error_handler(update, context):
     logger.error("Необработанное исключение:", exc_info=context.error)
 
 
-# ---------- Health-check сервер для Railway/Render ----------
 class HealthHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -84,9 +84,7 @@ def build_conversations():
 
     conv_set_ph = ConversationHandler(
         entry_points=[CallbackQueryHandler(ha.set_ph_start, pattern="^phset_manual$")],
-        states={
-            PH_DATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, ha.set_ph_date)],
-        },
+        states={PH_DATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, ha.set_ph_date)]},
         fallbacks=fallback,
     )
 
@@ -101,9 +99,7 @@ def build_conversations():
 
     conv_sched_upload = ConversationHandler(
         entry_points=[CallbackQueryHandler(ha.sched_upload_start, pattern="^sched_upload$")],
-        states={
-            SCHED_UPLOAD_TEXT: [MessageHandler(filters.Document.ALL, ha.sched_upload_document)],
-        },
+        states={SCHED_UPLOAD_TEXT: [MessageHandler(filters.Document.ALL, ha.sched_upload_document)]},
         fallbacks=fallback,
     )
 
@@ -112,15 +108,46 @@ def build_conversations():
             CallbackQueryHandler(ha.sched_field_chosen, pattern="^field_"),
             CallbackQueryHandler(ha.sched_new_pair, pattern="^newpair_"),
         ],
+        states={SCHED_FIELD_VALUE: [MessageHandler(filters.TEXT & ~filters.COMMAND, ha.sched_field_value)]},
+        fallbacks=fallback,
+    )
+
+    conv_extra_add = ConversationHandler(
+        entry_points=[CallbackQueryHandler(ha.extra_add_start, pattern="^a_add_extra$")],
         states={
-            SCHED_FIELD_VALUE: [MessageHandler(filters.TEXT & ~filters.COMMAND, ha.sched_field_value)],
+            EXTRA_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, ha.extra_add_name)],
+            EXTRA_CONTENT: [
+                MessageHandler(filters.PHOTO, ha.extra_add_content_photo),
+                MessageHandler(filters.Document.ALL, ha.extra_add_content_photo),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, ha.extra_add_content_text),
+                CallbackQueryHandler(ha.extra_add_skip_photo, pattern="^extra_skip_photo$"),
+            ],
         },
+        fallbacks=fallback,
+    )
+
+    conv_set_group = ConversationHandler(
+        entry_points=[CallbackQueryHandler(ha.set_group_start, pattern="^a_set_group$")],
+        states={SET_GROUP: [MessageHandler(filters.TEXT & ~filters.COMMAND, ha.set_group_finish)]},
+        fallbacks=fallback,
+    )
+
+    conv_set_bot_name = ConversationHandler(
+        entry_points=[CallbackQueryHandler(ha.set_bot_name_start, pattern="^a_set_botname$")],
+        states={SET_BOT_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, ha.set_bot_name_finish)]},
+        fallbacks=fallback,
+    )
+
+    conv_set_bot_photo = ConversationHandler(
+        entry_points=[CallbackQueryHandler(ha.set_bot_photo_start, pattern="^a_set_botphoto$")],
+        states={SET_BOT_PHOTO: [MessageHandler(filters.PHOTO, ha.set_bot_photo_finish)]},
         fallbacks=fallback,
     )
 
     return [
         conv_add_hw, conv_add_ann, conv_add_replnote, conv_set_ph, conv_add_admin,
         conv_sched_upload, conv_sched_field,
+        conv_extra_add, conv_set_group, conv_set_bot_name, conv_set_bot_photo,
     ]
 
 
@@ -139,18 +166,19 @@ def main():
     application.add_handler(CommandHandler("start", hu.start))
     application.add_handler(CommandHandler("myid", hu.my_id))
 
-    # Многошаговые диалоги (регистрируются ДО общих callback-хендлеров)
+    # Диалоги — до общих callback-хендлеров
     for conv in build_conversations():
         application.add_handler(conv)
 
-    # Главное меню / пользовательские разделы
+    # Пользовательская часть
     application.add_handler(CallbackQueryHandler(hu.main_menu_callback, pattern="^main_menu$"))
     application.add_handler(CallbackQueryHandler(hu.show_schedule, pattern="^menu_zam$"))
     application.add_handler(CallbackQueryHandler(hu.show_hw, pattern="^menu_hw$"))
     application.add_handler(CallbackQueryHandler(hu.show_announcements, pattern="^menu_ann$"))
+    application.add_handler(CallbackQueryHandler(hu.show_extra_classes, pattern="^menu_extra$"))
+    application.add_handler(CallbackQueryHandler(hu.extra_class_open, pattern="^open_extra_\\d+$"))
     application.add_handler(CallbackQueryHandler(hu.show_info, pattern="^menu_info$"))
 
-    # Инфо -> подменю (звонки / расписание пар с картинками)
     application.add_handler(CallbackQueryHandler(hu.show_bells_menu, pattern="^info_bells$"))
     application.add_handler(CallbackQueryHandler(hu.show_bells_regular, pattern="^bells_regular$"))
     application.add_handler(CallbackQueryHandler(hu.show_bells_regular_a, pattern="^bells_regular_a$"))
@@ -159,12 +187,11 @@ def main():
     application.add_handler(CallbackQueryHandler(hu.show_sched_img_menu, pattern="^info_sched_img$"))
     application.add_handler(CallbackQueryHandler(hu.send_schedule_image, pattern="^schedimg_(num|den|cmp)$"))
 
-    # Reply-кнопка «Меню»
     application.add_handler(MessageHandler(
         filters.Regex("^📋 Меню$") & ~filters.COMMAND, hu.handle_menu_reply_button
     ))
 
-    # Админ-панель — верхний уровень и подменю
+    # Админка
     application.add_handler(CallbackQueryHandler(ha.admin_panel_entry, pattern="^admin_panel$"))
     application.add_handler(CallbackQueryHandler(ha.shift_menu, pattern="^a_shift$"))
     application.add_handler(CallbackQueryHandler(ha.shift_set, pattern="^shiftset_(1|2)$"))
@@ -172,6 +199,8 @@ def main():
     application.add_handler(CallbackQueryHandler(ha.ann_menu, pattern="^a_ann_menu$"))
     application.add_handler(CallbackQueryHandler(ha.ph_menu, pattern="^a_ph_menu$"))
     application.add_handler(CallbackQueryHandler(ha.admins_menu, pattern="^a_admins_menu$"))
+    application.add_handler(CallbackQueryHandler(ha.extra_menu, pattern="^a_extra_menu$"))
+    application.add_handler(CallbackQueryHandler(ha.bot_settings_menu, pattern="^a_bot_settings$"))
 
     application.add_handler(CallbackQueryHandler(ha.del_hw_list, pattern="^a_del_hw$"))
     application.add_handler(CallbackQueryHandler(ha.del_hw_pick, pattern="^delhw_\\d+$"))
@@ -191,6 +220,13 @@ def main():
     application.add_handler(CallbackQueryHandler(ha.del_admin_confirm, pattern="^confirm_deladmin_\\d+$"))
     application.add_handler(CallbackQueryHandler(ha.view_admins, pattern="^a_view_admins$"))
 
+    # Доп. занятия (админ)
+    application.add_handler(CallbackQueryHandler(ha.extra_del_list, pattern="^a_del_extra$"))
+    application.add_handler(CallbackQueryHandler(ha.extra_del_pick, pattern="^delextra_\\d+$"))
+    application.add_handler(CallbackQueryHandler(ha.extra_del_confirm, pattern="^confirm_delextra_\\d+$"))
+    application.add_handler(CallbackQueryHandler(ha.extra_view, pattern="^a_view_extra$"))
+
+    # Расписание (админ)
     application.add_handler(CallbackQueryHandler(ha.edit_schedule_menu, pattern="^a_sched_menu$"))
     application.add_handler(CallbackQueryHandler(ha.del_all_day_menu, pattern="^a_del_all_day$"))
     application.add_handler(CallbackQueryHandler(ha.sched_by_day_start, pattern="^sched_by_day$"))
@@ -201,11 +237,11 @@ def main():
     application.add_handler(CallbackQueryHandler(ha.sched_delete_pair, pattern="^delpair_"))
     application.add_handler(CallbackQueryHandler(ha.sched_upload_confirm, pattern="^confirm_schedupload_0$"))
 
-    # Общие отмены/подтверждения, которые не попали в конкретный ConversationHandler
     application.add_handler(CallbackQueryHandler(ha.cancel_conversation, pattern="^cancel_action$"))
     application.add_handler(CallbackQueryHandler(ha.back_to_admin_panel, pattern="^cancel_delhw$"))
     application.add_handler(CallbackQueryHandler(ha.back_to_admin_panel, pattern="^cancel_delann$"))
     application.add_handler(CallbackQueryHandler(ha.back_to_admin_panel, pattern="^cancel_deladmin$"))
+    application.add_handler(CallbackQueryHandler(ha.back_to_admin_panel, pattern="^cancel_delextra$"))
     application.add_handler(CallbackQueryHandler(ha.back_to_admin_panel, pattern="^cancel_schedupload$"))
 
     logger.info("Бот запущен. Health-сервер на порту %s", os.environ.get("PORT", 8000))

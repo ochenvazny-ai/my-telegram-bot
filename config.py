@@ -1,41 +1,1 @@
-import os
-
-BOT_TOKEN = os.environ.get("BOT_TOKEN")
-if not BOT_TOKEN:
-    raise ValueError("BOT_TOKEN РЅРµ Р·Р°РґР°РЅ")
-
-DATABASE_URL = os.environ.get("DATABASE_URL")
-if not DATABASE_URL:
-    raise ValueError("DATABASE_URL РЅРµ Р·Р°РґР°РЅР°")
-
-INITIAL_ADMIN_ID = int(os.environ.get("INITIAL_ADMIN_ID", "1207797393"))
-
-GROUP_NAME = os.environ.get("GROUP_NAME", "РР‘1-31")
-
-SCHEDULE_SITE_URL_SHIFT1 = "https://menu.sttec.yar.ru/timetable/rasp_first.html"
-SCHEDULE_SITE_URL_SHIFT2 = "https://menu.sttec.yar.ru/timetable/rasp_second.html"
-
-
-def get_site_url(shift: str) -> str:
-    return SCHEDULE_SITE_URL_SHIFT2 if str(shift) == "2" else SCHEDULE_SITE_URL_SHIFT1
-
-
-WEEKDAYS_RU = ["РїРѕРЅРµРґРµР»СЊРЅРёРє", "РІС‚РѕСЂРЅРёРє", "СЃСЂРµРґР°", "С‡РµС‚РІРµСЂРі", "РїСЏС‚РЅРёС†Р°", "СЃСѓР±Р±РѕС‚Р°", "РІРѕСЃРєСЂРµСЃРµРЅСЊРµ"]
-
-MONTHS_RU = {
-    1: "СЏРЅРІР°СЂСЏ", 2: "С„РµРІСЂР°Р»СЏ", 3: "РјР°СЂС‚Р°", 4: "Р°РїСЂРµР»СЏ", 5: "РјР°СЏ", 6: "РёСЋРЅСЏ",
-    7: "РёСЋР»СЏ", 8: "Р°РІРіСѓСЃС‚Р°", 9: "СЃРµРЅС‚СЏР±СЂСЏ", 10: "РѕРєС‚СЏР±СЂСЏ", 11: "РЅРѕСЏР±СЂСЏ", 12: "РґРµРєР°Р±СЂСЏ",
-}
-MONTHS_RU_TO_NUM = {v: k for k, v in MONTHS_RU.items()}
-
-NUMBER_EMOJIS = ["0пёЏвѓЈ", "1пёЏвѓЈ", "2пёЏвѓЈ", "3пёЏвѓЈ", "4пёЏвѓЈ", "5пёЏвѓЈ", "6пёЏвѓЈ", "7пёЏвѓЈ", "8пёЏвѓЈ", "9пёЏвѓЈ"]
-
-(
-    HW_TEXT, HW_DUE,
-    ANN_TEXT, ANN_CONFIRM,
-    REPLNOTE_TEXT, REPLNOTE_CONFIRM,
-    PH_DATE,
-    SCHED_UPLOAD_TEXT,
-    SCHED_FIELD_VALUE,
-    ADMIN_ID, ADMIN_NAME,
-) = range(11)
+import osfrom dotenv import load_dotenvload_dotenv()BOT_TOKEN = os.environ["BOT_TOKEN"]DATABASE_URL = os.environ["DATABASE_URL"]INITIAL_ADMIN_ID = int(os.environ["INITIAL_ADMIN_ID"])PORT = int(os.environ.get("PORT", "8000"))# Дефолт для названия группы. Реальное значение читается из БД (db.get_group_name).GROUP_NAME = os.environ.get("GROUP_NAME", "ИБ1-31")WEEKDAYS_RU = ["понедельник", "вторник", "среда", "четверг", "пятница", "суббота", "воскресенье"]MONTHS_RU = {    1: "января", 2: "февраля", 3: "марта", 4: "апреля", 5: "мая", 6: "июня",    7: "июля", 8: "августа", 9: "сентября", 10: "октября", 11: "ноября", 12: "декабря",}MONTHS_RU_TO_NUM = {v: k for k, v in MONTHS_RU.items()}NUMBER_EMOJIS = ["0??", "1??", "2??", "3??", "4??", "5??", "6??", "7??", "8??", "9??"]def get_site_url(shift: str) -> str:    if shift == "2":        return "https://menu.sttec.yar.ru/timetable/rasp_second.html"    return "https://menu.sttec.yar.ru/timetable/rasp_first.html"# Состояния диалоговHW_TEXT, HW_DUE = range(2)ANN_TEXT, ANN_CONFIRM = range(2, 4)REPLNOTE_TEXT, REPLNOTE_CONFIRM = range(4, 6)PH_DATE = 6SCHED_UPLOAD_TEXT, SCHED_FIELD_VALUE = range(7, 9)ADMIN_ID, ADMIN_NAME = range(9, 11)EXTRA_NAME, EXTRA_CONTENT = range(20, 22)SET_GROUP, SET_BOT_NAME, SET_BOT_PHOTO = range(30, 33)

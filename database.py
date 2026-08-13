@@ -5,7 +5,7 @@ import psycopg2
 from psycopg2 import pool
 from psycopg2.extras import RealDictCursor
 
-from config import DATABASE_URL
+from config import DATABASE_URL, GROUP_NAME
 
 logger = logging.getLogger(__name__)
 
@@ -147,7 +147,6 @@ def add_announcement_db(text: str, author_id: int, is_replacement_note: bool = F
 
 
 def get_active_announcements():
-    """Все активные объявления, включая подписи к заменам."""
     try:
         with get_cursor() as cur:
             cur.execute(
@@ -161,7 +160,6 @@ def get_active_announcements():
 
 
 def get_active_replacement_notes():
-    """Только подписи к заменам — для вывода в конце сообщения «Замены»."""
     try:
         with get_cursor() as cur:
             cur.execute(
@@ -339,7 +337,7 @@ def delete_pair(week_type: str, day_of_week: int, pair_number: int) -> bool:
         return False
 
 
-# ---------- SCHEDULE HISTORY (кэш) ----------
+# ---------- SCHEDULE HISTORY ----------
 def get_cached_schedule(target_date: date_cls):
     try:
         with get_cursor() as cur:
@@ -405,3 +403,94 @@ def get_current_shift() -> str:
 
 def set_current_shift(shift: str) -> bool:
     return set_setting("current_shift", shift)
+
+
+def get_group_name() -> str:
+    return get_setting("group_name", GROUP_NAME)
+
+
+def set_group_name(name: str) -> bool:
+    return set_setting("group_name", name)
+
+
+# ---------- SCHEDULE IMAGES CACHE ----------
+def get_image(kind: str) -> bytes | None:
+    try:
+        with get_cursor() as cur:
+            cur.execute("SELECT image_bytes FROM schedule_images WHERE kind = %s;", (kind,))
+            row = cur.fetchone()
+            return bytes(row["image_bytes"]) if row else None
+    except Exception:
+        logger.exception("get_image failed for %s", kind)
+        return None
+
+
+def save_image(kind: str, data: bytes) -> bool:
+    try:
+        with get_cursor(commit=True) as cur:
+            cur.execute("""
+                INSERT INTO schedule_images (kind, image_bytes, updated_at)
+                VALUES (%s, %s, NOW())
+                ON CONFLICT (kind) DO UPDATE SET image_bytes = EXCLUDED.image_bytes, updated_at = NOW();
+            """, (kind, data))
+        return True
+    except Exception:
+        logger.exception("save_image failed for %s", kind)
+        return False
+
+
+# ---------- EXTRA CLASSES ----------
+def add_extra_class(subject: str, description: str | None, photo_id: str | None) -> int | None:
+    try:
+        with get_cursor(commit=True) as cur:
+            cur.execute(
+                "INSERT INTO extra_classes (subject, description, photo_id, created_at, is_active) "
+                "VALUES (%s, %s, %s, NOW(), true) RETURNING id;",
+                (subject, description, photo_id),
+            )
+            return cur.fetchone()["id"]
+    except Exception:
+        logger.exception("add_extra_class failed")
+        return None
+
+
+def get_active_extra_classes():
+    try:
+        with get_cursor() as cur:
+            cur.execute(
+                "SELECT id, subject, description, photo_id, created_at FROM extra_classes "
+                "WHERE is_active = true ORDER BY created_at DESC;"
+            )
+            return [(r["id"], r["subject"], r["description"], r["photo_id"], str(r["created_at"]))
+                    for r in cur.fetchall()]
+    except Exception:
+        logger.exception("get_active_extra_classes failed")
+        return []
+
+
+def get_extra_class(item_id: int):
+    try:
+        with get_cursor() as cur:
+            cur.execute(
+                "SELECT id, subject, description, photo_id FROM extra_classes "
+                "WHERE id = %s AND is_active = true;", (item_id,)
+            )
+            row = cur.fetchone()
+            if not row:
+                return None
+            return (row["id"], row["subject"], row["description"], r := row["photo_id"])
+    except Exception:
+        logger.exception("get_extra_class failed for %s", item_id)
+        return None
+
+
+def deactivate_extra_class(item_id: int) -> bool:
+    try:
+        with get_cursor(commit=True) as cur:
+            cur.execute(
+                "UPDATE extra_classes SET is_active = false WHERE id = %s RETURNING id;", (item_id,)
+            )
+            return cur.fetchone() is not None
+    except Exception:
+        logger.exception("deactivate_extra_class failed for %s", item_id)
+        return False
