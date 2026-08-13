@@ -53,7 +53,15 @@ def extract_metadata_from_html(html_text: str):
     return file_date, week_type
 
 
-def parse_replacements_from_html(html_text: str, group_name: str = GROUP_NAME):
+def parse_replacements_from_html(html_text: str, group_name: str = None):
+    """group_name по умолчанию берётся из БД (db.get_group_name),
+    fallback на GROUP_NAME из config.py."""
+    if group_name is None:
+        try:
+            group_name = db.get_group_name()
+        except Exception:
+            group_name = GROUP_NAME
+
     soup = BeautifulSoup(html_text, 'lxml')
     table = soup.find('table')
     if not table:
@@ -87,9 +95,7 @@ def parse_replacements_from_html(html_text: str, group_name: str = GROUP_NAME):
 
 
 def build_final_entries(week_type: str, day_of_week: int, replacements: list[dict]) -> list[dict]:
-    """Возвращает список словарей с полями pair_num, subject, teacher, room, is_replaced,
-    original_subject, original_teacher, original_room — уже с наложенными заменами."""
-    base = db.get_base_schedule(week_type, day_of_week)  # {pair_number(int): {subject,teacher,room}}
+    base = db.get_base_schedule(week_type, day_of_week)
     repl_dict = {}
     for r in replacements:
         pair = r['pair']
@@ -192,8 +198,6 @@ def _pre_holiday_note(file_date: date_cls, today: date_cls) -> str | None:
 
 
 async def get_schedule_for_display() -> tuple[str, bool]:
-    """Главная функция получения расписания на «сегодня» (то, что показывает кнопка «Замены»).
-    Возвращает (текст_сообщения, успех)."""
     shift = await asyncio.to_thread(db.get_current_shift)
     site_url = get_site_url(shift)
 
@@ -215,7 +219,6 @@ async def get_schedule_for_display() -> tuple[str, bool]:
     ph_note = await asyncio.to_thread(_pre_holiday_note, file_date, today)
     repl_notes = await asyncio.to_thread(db.get_active_replacement_notes)
 
-    # 1. Проверяем кэш
     cached = await asyncio.to_thread(db.get_cached_schedule, file_date)
     if cached:
         entries = [{
@@ -228,14 +231,12 @@ async def get_schedule_for_display() -> tuple[str, bool]:
     day_of_week = file_date.weekday()
 
     if day_diff <= 1:
-        # сегодня или завтра — парсим замены, кэшируем
         replacements = parse_replacements_from_html(html_text)
         entries = await asyncio.to_thread(build_final_entries, week_type, day_of_week, replacements)
         await asyncio.to_thread(db.save_schedule_cache, file_date, week_type, weekday_name, entries)
         return format_schedule_message(file_date, week_type, entries, site_url,
                                         note=ph_note or "", replacement_notes=repl_notes), True
     elif day_diff < 0:
-        # прошлая дата — замены не сохранялись, показываем базовое расписание
         base = await asyncio.to_thread(db.get_base_schedule, week_type, day_of_week)
         entries = [{"pair_num": str(p), "subject": v["subject"], "teacher": v["teacher"],
                     "room": v["room"], "is_replaced": False} for p, v in sorted(base.items())]
@@ -243,7 +244,6 @@ async def get_schedule_for_display() -> tuple[str, bool]:
         return format_schedule_message(file_date, week_type, entries, site_url, note=note,
                                         replacement_notes=repl_notes), True
     else:
-        # далёкое будущее — базовое расписание с пометкой
         base = await asyncio.to_thread(db.get_base_schedule, week_type, day_of_week)
         entries = [{"pair_num": str(p), "subject": v["subject"], "teacher": v["teacher"],
                     "room": v["room"], "is_replaced": False} for p, v in sorted(base.items())]
