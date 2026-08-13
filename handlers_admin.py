@@ -207,7 +207,7 @@ async def del_hw_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text("\n".join(lines), reply_markup=kb.delete_hw_kb(tasks))
 
 
-# ---------- ОБЪЯВЛЕНИЯ (с поддержкой фото) ----------
+# ---------- ОБЪЯВЛЕНИЯ (с фото) ----------
 async def add_ann_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -221,9 +221,8 @@ async def add_ann_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         chat_id=update.effective_chat.id,
         text=(
             "📝 Введите текст объявления.\n"
-            "Можно также прикрепить фото (отправьте его как фото, опционально с подписью).\n"
-            "Если фото — текст подписи станет текстом объявления.\n"
-            "Если только текст — просто напишите его."
+            "После текста можно прикрепить фото (отправьте фото с подписью — подпись станет текстом).\n"
+            "Если нужно только фото — напишите любой текст, потом пришлите фото."
         ),
         reply_markup=kb.cancel_button(),
     )
@@ -231,29 +230,27 @@ async def add_ann_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def add_ann_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Текст объявления. После текста спрашиваем, есть ли фото."""
+    """Текст объявления. После — спрашиваем фото."""
     context.user_data['ann_text'] = update.message.text.strip()
     await update.message.reply_text(
         f"📝 Текст объявления:\n{context.user_data['ann_text']}\n\n"
-        f"Хотите прикрепить фото? Пришлите фото (можно с подписью), либо нажмите «Пропустить».",
+        f"Хотите прикрепить фото? Пришлите фото (можно с другой подписью) или нажмите «Пропустить».",
         reply_markup=kb.ann_skip_photo_kb(),
     )
     return ANN_PHOTO
 
 
 async def add_ann_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Получили фото. Текст объявления = caption (если есть) ИЛИ ранее введённый текст."""
+    """Получили фото. Текст = caption (если есть) ИЛИ ранее введённый."""
     caption = (update.message.caption or "").strip() if update.message else ""
     photo_id = None
     if update.message and update.message.photo:
         photo_id = update.message.photo[-1].file_id
 
-    # Текст объявления: если caption непустой — он; иначе — ранее введённый текст.
     ann_text = caption if caption else context.user_data.get('ann_text', '')
     context.user_data['ann_text'] = ann_text
     context.user_data['ann_photo_id'] = photo_id
 
-    # Превью с пометкой о вложении
     preview_text = ann_text if ann_text else "(без текста)"
     await update.message.reply_text(
         f"📢 Текст объявления:\n{preview_text}\n📎 Вложение: фото\n\n"
@@ -264,7 +261,7 @@ async def add_ann_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def add_ann_skip_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Пропустили фото — итоговый текст без вложения."""
+    """Пропустили фото."""
     query = update.callback_query
     await query.answer()
     context.user_data['ann_photo_id'] = None
@@ -292,7 +289,6 @@ RATE_LIMIT_DELAY = 0.05
 
 
 async def _broadcast(bot, text: str, has_attachment: bool) -> tuple[int, int]:
-    """Рассылает текст объявления. Если есть вложение — добавляет '📎 Вложение' в конец текста."""
     user_ids = await asyncio.to_thread(db.get_all_user_ids)
     sent, failed = 0, 0
     broadcast_text = f"📢 {text}"
@@ -316,7 +312,6 @@ async def add_ann_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
     photo_id = context.user_data.get('ann_photo_id')
     author_id = update.effective_user.id
     has_attach = bool(photo_id)
-    # Сохраняем в БД (даже если текст пустой — с пометкой)
     save_text = text if text else ""
     await asyncio.to_thread(db.add_announcement_db, save_text, author_id, False, photo_id)
 
@@ -538,7 +533,7 @@ async def extra_add_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['extra_subject'] = update.message.text.strip()
     await update.message.reply_text(
         "Пришлите фото расписания (опционально с подписью) или нажмите «Пропустить фото».\n"
-        "Текст подписи к фото будет показан отдельно в доп. занятии.",
+        "Текст подписи к фото будет показан отдельно как описание занятия.",
         reply_markup=kb.extra_skip_photo_kb(),
     )
     return EXTRA_CONTENT
@@ -561,8 +556,6 @@ async def extra_add_content_photo(update: Update, context: ContextTypes.DEFAULT_
 
 
 async def extra_add_content_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Только текст, без фото — пишем без описания."""
-    subject = context.user_data.get('extra_subject', '')
     await update.message.reply_text(
         "Если хотите добавить фото расписания — пришлите его. "
         "Если только название без расписания — нажмите «Пропустить фото».",
@@ -758,7 +751,7 @@ async def set_bot_photo_finish(update: Update, context: ContextTypes.DEFAULT_TYP
     return ConversationHandler.END
 
 
-# ---------- РАСПИСАНИЕ (теперь в настройках бота) ----------
+# ---------- РАСПИСАНИЕ (в настройках бота) ----------
 async def edit_schedule_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()

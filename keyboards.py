@@ -91,6 +91,7 @@ def admin_panel_kb():
     kb = [
         [InlineKeyboardButton("📚 Домашнее задание", callback_data="a_hw_menu")],
         [InlineKeyboardButton("📢 Объявления", callback_data="a_ann_menu")],
+        [InlineKeyboardButton("📚 Доп. занятия", callback_data="a_extra_menu")],
         [InlineKeyboardButton("⚙️ Настройки бота", callback_data="a_bot_settings")],
         [InlineKeyboardButton("👥 Админы", callback_data="a_admins_menu")],
         [InlineKeyboardButton("🔙 Главное меню", callback_data="main_menu")],

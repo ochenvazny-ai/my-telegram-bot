@@ -10,23 +10,20 @@ logger = logging.getLogger(__name__)
 
 # ---------- Геометрия ----------
 MARGIN = 14
-TITLE_H = 34
-DAY_BANNER_H = 30
-HEADER_H = 26
+TITLE_H = 32
+WATERMARK_H = 22
+DAY_BANNER_H = 28
+HEADER_H = 24
 ROW_MIN_H = 30
 LINE_H = 15
 PAD_V = 5
 SPLIT_GAP = 4
 
-COL_W = {"num": 34, "subject": 190, "teacher": 160, "room": 80}
+COL_W = {"num": 32, "subject": 200, "teacher": 160, "room": 72}
 TABLE_W = sum(COL_W.values())
 IMG_W = TABLE_W + MARGIN * 2
 
-# Водяной знак
-WATERMARK_H = 26
-WATERMARK_TOP_STRIP = 4   # ярко-зелёная полоска сверху
-
-# ---------- Палитра основной таблицы ----------
+# ---------- Палитра ----------
 COLOR_BG = (255, 249, 235)
 COLOR_GRID = (200, 195, 180)
 COLOR_DAY_BG = (50, 40, 38)
@@ -42,13 +39,13 @@ COLOR_NUM = (93, 13, 24)
 COLOR_DEN = (224, 120, 86)
 COLOR_MATCH = (93, 13, 24)
 
-# ---------- Палитра водяного знака ----------
-COLOR_WM_TOP_STRIP = (61, 161, 110)   # #3DA16E — ярко-зелёный
-COLOR_WM_BG = (14, 40, 28)            # #0E281C — тёмно-зелёный
-COLOR_WM_SHADOW = (10, 33, 23)        # #0A2117 — глубокая тень
-COLOR_WM_ACCENT = (76, 168, 119)      # #4CA877 — мягкий акцент
-COLOR_WM_TEXT = (255, 255, 255)       # #FFFFFF — белый
-COLOR_WM_TEXT_SOFT = (246, 250, 246)  # #F6FAF6 — почти-белый
+# Водяной знак
+COLOR_WM_TOP_STRIP = (61, 161, 110)
+COLOR_WM_BG = (14, 40, 28)
+COLOR_WM_SHADOW = (10, 33, 23)
+COLOR_WM_ACCENT = (76, 168, 119)
+COLOR_WM_TEXT = (255, 255, 255)
+COLOR_WM_TEXT_SOFT = (246, 250, 246)
 
 # ---------- Шрифты ----------
 def _find_cyrillic_font_path(bold: bool) -> str | None:
@@ -98,11 +95,11 @@ def _font_bold(size=13):
 
 
 FONT_TITLE = _font_bold(18)
+FONT_WM = _font_bold(12)
 FONT_DAY = _font_bold(14)
 FONT_HEADER = _font_bold(12)
 FONT_CELL = _font(12)
 FONT_CELL_BOLD = _font_bold(12)
-FONT_WM = _font_bold(13)
 
 
 def _wrap_lines(draw, text, font, max_width):
@@ -146,37 +143,37 @@ def _draw_lines_centered(draw, lines, font, x, y_top, height, width, color, alig
         y += LINE_H
 
 
-def _draw_watermark(img: Image.Image, draw: ImageDraw.ImageDraw, watermark_text: str):
-    """Рисует водяной знак сверху: ярко-зелёная полоска, тёмно-зелёный фон, белый текст."""
-    w, _ = img.size
-    # Полоска сверху
-    draw.rectangle([0, 0, w, WATERMARK_TOP_STRIP], fill=COLOR_WM_TOP_STRIP)
-    # Тёмно-зелёный фон шапочки
-    draw.rectangle([0, WATERMARK_TOP_STRIP, w, WATERMARK_TOP_STRIP + WATERMARK_H], fill=COLOR_WM_BG)
-    # Тонкая нижняя тень-полоска
-    draw.rectangle([0, WATERMARK_TOP_STRIP + WATERMARK_H, w, WATERMARK_TOP_STRIP + WATERMARK_H + 2], fill=COLOR_WM_SHADOW)
-    # Текст по центру
-    tw = draw.textlength(watermark_text, font=FONT_WM)
-    tx = (w - tw) // 2
-    ty = WATERMARK_TOP_STRIP + (WATERMARK_H - 15) // 2
-    draw.text((tx, ty), watermark_text, fill=COLOR_WM_TEXT, font=FONT_WM)
-    # Маленький акцент слева и справа от текста
-    accent_w = 18
+def _draw_watermark_strip(draw, width, y):
+    """Отрисовывает полоску водяного знака (зелёная шапка + тёмно-зелёный фон)."""
+    draw.rectangle([0, y, width, y + 4], fill=COLOR_WM_TOP_STRIP)
+    draw.rectangle([0, y + 4, width, y + 4 + WATERMARK_H], fill=COLOR_WM_BG)
+    draw.rectangle([0, y + 4 + WATERMARK_H, width, y + 4 + WATERMARK_H + 2], fill=COLOR_WM_SHADOW)
+
+
+def _draw_watermark_text(draw, text, y_text_start):
+    img_w_for_text = globals().get("IMG_W", 464)  # fallback
+    tw = draw.textlength(text, font=FONT_WM)
+    tx = (img_w_for_text - tw) // 2
+    ty = y_text_start + 4 + (WATERMARK_H - 13) // 2
+    draw.text((tx, ty), text, fill=COLOR_WM_TEXT, font=FONT_WM)
+    # Акценты слева/справа
+    accent_w = 16
     accent_h = 2
+    ay = ty + 6
     left_x1 = tx - accent_w - 6
     left_x2 = tx - 6
     right_x1 = tx + tw + 6
     right_x2 = right_x1 + accent_w
-    ay = ty + 6
     draw.rectangle([left_x1, ay, left_x2, ay + accent_h], fill=COLOR_WM_ACCENT)
     draw.rectangle([right_x1, ay, right_x2, ay + accent_h], fill=COLOR_WM_ACCENT)
 
 
 def _get_watermark_text() -> str:
     try:
-        return db.get_bot_display_name()
+        name = db.get_bot_display_name()
     except Exception:
-        return "Бот"
+        name = "Бот"
+    return f"{name} — Бот"
 
 
 def _get_day_data(week_type: str, day: int) -> dict:
@@ -185,6 +182,9 @@ def _get_day_data(week_type: str, day: int) -> dict:
 
 # ==================== ОДИНОЧНОЕ РАСПИСАНИЕ ====================
 def render_schedule_image(week_type: str) -> bytes:
+    global IMG_W
+    IMG_W = TABLE_W + MARGIN * 2
+
     accent = COLOR_NUM if week_type == "Числитель" else COLOR_DEN
     measure_img = Image.new("RGB", (10, 10))
     md = ImageDraw.Draw(measure_img)
@@ -208,24 +208,28 @@ def render_schedule_image(week_type: str) -> bytes:
     if not days_blocks:
         return _render_empty_image(f"Расписание — {week_type}", "Нет данных для отображения")
 
-    body_h = TITLE_H
+    body_h = TITLE_H + WATERMARK_H + 6  # заголовок + водяной знак
     for day, rows in days_blocks:
-        body_h += DAY_BANNER_H + HEADER_H + sum(r[4] for r in rows)
+        body_h += DAY_BANNER_H + sum(r[4] for r in rows)
     body_h += MARGIN
 
-    total_h = WATERMARK_TOP_STRIP + WATERMARK_H + 2 + body_h
-    img = Image.new("RGB", (IMG_W, total_h), COLOR_BG)
+    img = Image.new("RGB", (IMG_W, body_h), COLOR_BG)
     draw = ImageDraw.Draw(img)
 
-    _draw_watermark(img, draw, _get_watermark_text())
+    x0 = MARGIN
+    y = MARGIN
 
-    y = WATERMARK_TOP_STRIP + WATERMARK_H + 2 + MARGIN
+    # Заголовок «Расписание — Числитель»
     title = f"Расписание — {week_type}"
     tw = draw.textlength(title, font=FONT_TITLE)
     draw.text(((IMG_W - tw) // 2, y), title, fill=COLOR_TITLE, font=FONT_TITLE)
     y += TITLE_H
 
-    x0 = MARGIN
+    # Водяной знак ПОД заголовком
+    _draw_watermark_strip(draw, IMG_W, y)
+    _draw_watermark_text(draw, _get_watermark_text(), y)
+    y += 4 + WATERMARK_H + 2
+
     col_x = {
         "num": x0,
         "subject": x0 + COL_W["num"],
@@ -233,23 +237,24 @@ def render_schedule_image(week_type: str) -> bytes:
         "room": x0 + COL_W["num"] + COL_W["subject"] + COL_W["teacher"],
     }
 
+    # Общая шапка таблицы — ОДИН РАЗ перед первым днём
+    draw.rectangle([x0, y, x0 + TABLE_W, y + HEADER_H], fill=COLOR_HEADER_BG, outline=COLOR_GRID)
+    headers = [("№", "num"), ("Предмет", "subject"), ("Преподаватель", "teacher"), ("Кабинет", "room")]
+    for label, key in headers:
+        draw.text((col_x[key] + 6, y + 4), label, fill=COLOR_HEADER_TEXT, font=FONT_HEADER)
+    y += HEADER_H
+
     for day, rows in days_blocks:
         draw.rectangle([x0, y, x0 + TABLE_W, y + DAY_BANNER_H], fill=COLOR_DAY_BG)
         day_title = WEEKDAYS_RU[day].capitalize()
         dw = draw.textlength(day_title, font=FONT_DAY)
-        draw.text((x0 + (TABLE_W - dw) // 2, y + 6), day_title, fill=COLOR_DAY_TEXT, font=FONT_DAY)
+        draw.text((x0 + (TABLE_W - dw) // 2, y + 5), day_title, fill=COLOR_DAY_TEXT, font=FONT_DAY)
         y += DAY_BANNER_H
-
-        draw.rectangle([x0, y, x0 + TABLE_W, y + HEADER_H], fill=COLOR_HEADER_BG, outline=COLOR_GRID)
-        headers = [("№", "num"), ("Предмет", "subject"), ("Преподаватель", "teacher"), ("Кабинет", "room")]
-        for label, key in headers:
-            draw.text((col_x[key] + 6, y + 5), label, fill=COLOR_HEADER_TEXT, font=FONT_HEADER)
-        y += HEADER_H
 
         for idx, (pair_num, lines_s, lines_t, lines_r, row_h) in enumerate(rows):
             bg = COLOR_ROW_EVEN if idx % 2 == 0 else COLOR_ROW_ODD
             draw.rectangle([x0, y, x0 + TABLE_W, y + row_h], fill=bg, outline=COLOR_GRID)
-            draw.text((col_x["num"] + 10, y + (row_h - LINE_H) // 2), str(pair_num),
+            draw.text((col_x["num"] + 8, y + (row_h - LINE_H) // 2), str(pair_num),
                        fill=accent, font=FONT_CELL_BOLD)
             _draw_lines_centered(draw, lines_s, FONT_CELL_BOLD, col_x["subject"] + 6, y, row_h,
                                   COL_W["subject"] - 10, accent)
@@ -260,22 +265,28 @@ def render_schedule_image(week_type: str) -> bytes:
             y += row_h
 
     buf = io.BytesIO()
-    img.save(buf, format="PNG")
+    img.save(buf, format="PNG", optimize=True)
     buf.seek(0)
     return buf.getvalue()
 
 
 def _render_empty_image(title: str, message: str) -> bytes:
-    img = Image.new("RGB", (IMG_W, 120 + WATERMARK_TOP_STRIP + WATERMARK_H + 2), COLOR_BG)
+    global IMG_W
+    IMG_W = TABLE_W + MARGIN * 2
+    img_h = MARGIN + TITLE_H + WATERMARK_H + 6 + 60 + MARGIN
+    img = Image.new("RGB", (IMG_W, img_h), COLOR_BG)
     draw = ImageDraw.Draw(img)
-    _draw_watermark(img, draw, _get_watermark_text())
-    y0 = WATERMARK_TOP_STRIP + WATERMARK_H + 2 + 20
+    y = MARGIN
     tw = draw.textlength(title, font=FONT_TITLE)
-    draw.text(((IMG_W - tw) // 2, y0), title, fill=COLOR_TITLE, font=FONT_TITLE)
+    draw.text(((IMG_W - tw) // 2, y), title, fill=COLOR_TITLE, font=FONT_TITLE)
+    y += TITLE_H
+    _draw_watermark_strip(draw, IMG_W, y)
+    _draw_watermark_text(draw, _get_watermark_text(), y)
+    y += 4 + WATERMARK_H + 2 + 20
     mw = draw.textlength(message, font=FONT_CELL)
-    draw.text(((IMG_W - mw) // 2, y0 + 40), message, fill=COLOR_TEXT, font=FONT_CELL)
+    draw.text(((IMG_W - mw) // 2, y), message, fill=COLOR_TEXT, font=FONT_CELL)
     buf = io.BytesIO()
-    img.save(buf, format="PNG")
+    img.save(buf, format="PNG", optimize=True)
     buf.seek(0)
     return buf.getvalue()
 
@@ -293,6 +304,9 @@ def _cmp_field(md, num_val: str, den_val: str, max_width: int):
 
 
 def render_comparison_image() -> bytes:
+    global IMG_W
+    IMG_W = TABLE_W + MARGIN * 2
+
     measure_img = Image.new("RGB", (10, 10))
     md = ImageDraw.Draw(measure_img)
 
@@ -323,33 +337,39 @@ def render_comparison_image() -> bytes:
     if not days_blocks:
         return _render_empty_image("Расписание — Сравнение", "Нет данных для отображения")
 
-    body_h = TITLE_H * 2
+    body_h = TITLE_H + WATERMARK_H + 6
     for day, rows in days_blocks:
-        body_h += DAY_BANNER_H + HEADER_H + sum(r["row_h"] for r in rows)
+        body_h += DAY_BANNER_H + sum(r["row_h"] for r in rows)
     body_h += MARGIN
-    total_h = WATERMARK_TOP_STRIP + WATERMARK_H + 2 + body_h
+    total_h = body_h
 
     img = Image.new("RGB", (IMG_W, total_h), COLOR_BG)
     draw = ImageDraw.Draw(img)
-    _draw_watermark(img, draw, _get_watermark_text())
-
-    y = WATERMARK_TOP_STRIP + WATERMARK_H + 2 + MARGIN
+    x0 = MARGIN
+    y = MARGIN
 
     title = "Расписание — Сравнение"
-    subtitle = "Совпадения — Bloodstone, различия: числитель — Bloodstone, знаменатель — Terracotta"
     tw = draw.textlength(title, font=FONT_TITLE)
     draw.text(((IMG_W - tw) // 2, y), title, fill=COLOR_TITLE, font=FONT_TITLE)
-    sw = draw.textlength(subtitle, font=FONT_CELL)
-    draw.text(((IMG_W - sw) // 2, y + 22), subtitle, fill=COLOR_TEXT, font=FONT_CELL)
-    y += TITLE_H * 2
+    y += TITLE_H
 
-    x0 = MARGIN
+    _draw_watermark_strip(draw, IMG_W, y)
+    _draw_watermark_text(draw, _get_watermark_text(), y)
+    y += 4 + WATERMARK_H + 2
+
     col_x = {
         "num": x0,
         "subject": x0 + COL_W["num"],
         "teacher": x0 + COL_W["num"] + COL_W["subject"],
         "room": x0 + COL_W["num"] + COL_W["subject"] + COL_W["teacher"],
     }
+
+    # Общая шапка один раз
+    draw.rectangle([x0, y, x0 + TABLE_W, y + HEADER_H], fill=COLOR_HEADER_BG, outline=COLOR_GRID)
+    headers = [("№", "num"), ("Предмет", "subject"), ("Преподаватель", "teacher"), ("Кабинет", "room")]
+    for label, key in headers:
+        draw.text((col_x[key] + 6, y + 4), label, fill=COLOR_HEADER_TEXT, font=FONT_HEADER)
+    y += HEADER_H
 
     def draw_field(col_key, eq, lines_num, lines_den, row_top, row_h):
         cx = col_x[col_key] + 6
@@ -378,20 +398,14 @@ def render_comparison_image() -> bytes:
         draw.rectangle([x0, y, x0 + TABLE_W, y + DAY_BANNER_H], fill=COLOR_DAY_BG)
         day_title = WEEKDAYS_RU[day].capitalize()
         dw = draw.textlength(day_title, font=FONT_DAY)
-        draw.text((x0 + (TABLE_W - dw) // 2, y + 6), day_title, fill=COLOR_DAY_TEXT, font=FONT_DAY)
+        draw.text((x0 + (TABLE_W - dw) // 2, y + 5), day_title, fill=COLOR_DAY_TEXT, font=FONT_DAY)
         y += DAY_BANNER_H
-
-        draw.rectangle([x0, y, x0 + TABLE_W, y + HEADER_H], fill=COLOR_HEADER_BG, outline=COLOR_GRID)
-        headers = [("№", "num"), ("Предмет", "subject"), ("Преподаватель", "teacher"), ("Кабинет", "room")]
-        for label, key in headers:
-            draw.text((col_x[key] + 6, y + 5), label, fill=COLOR_HEADER_TEXT, font=FONT_HEADER)
-        y += HEADER_H
 
         for idx, row in enumerate(rows):
             row_h = row["row_h"]
             bg = COLOR_ROW_EVEN if idx % 2 == 0 else COLOR_ROW_ODD
             draw.rectangle([x0, y, x0 + TABLE_W, y + row_h], fill=bg, outline=COLOR_GRID)
-            draw.text((col_x["num"] + 10, y + (row_h - LINE_H) // 2), str(row["pair_num"]),
+            draw.text((col_x["num"] + 8, y + (row_h - LINE_H) // 2), str(row["pair_num"]),
                        fill=COLOR_TEXT, font=FONT_CELL_BOLD)
 
             eq_s, ls_num, ls_den = row["subject"]
@@ -403,29 +417,16 @@ def render_comparison_image() -> bytes:
             y += row_h
 
     buf = io.BytesIO()
-    img.save(buf, format="PNG")
+    img.save(buf, format="PNG", optimize=True)
     buf.seek(0)
     return buf.getvalue()
 
 
-# ==================== ЗВОНОК: ОБЫЧНЫЕ ДНИ (А + Б) ====================
-BELLS_REGULAR_ROWS = [
-    ("0 пара", "8:00 – 9:10", "8:00 – 9:10", "8:00 – 9:10"),
-    ("1 пара", "9:20 – 10:50", "9:20 – 10:50", "9:20 – 10:50"),
-    ("2 пара", "11:00 – 11:45\nперерыв 40 мин\n12:25 – 13:10", "11:00 – 12:30 (сплошная)\nперерыв 50 минут", "11:00 – 11:45\nперерыв 40 мин\n12:25 – 13:10"),
-    ("3 пара", "13:20 – 14:50", "13:20 – 14:50", "13:20 – 14:50"),
-    ("4 пара", "15:05 – 16:35", "15:05 – 16:35", "15:05 – 16:35"),
-    ("5 пара", "17:05 – 18:35", "17:05 – 18:35", "17:05 – 18:35"),
-    ("6 пара", "18:45 – 19:55", "18:45 – 19:55", "18:45 – 19:55"),
-]
-
-
-def _render_bells_table(rows, headers, title_text, subtitle_text=None, title_color=COLOR_TITLE):
-    """Универсальная отрисовка таблицы звонков с водяным знаком."""
+# ==================== ЗВОНКИ ====================
+def _render_bells_table(rows, headers, title_text, title_color=COLOR_TITLE):
     measure_img = Image.new("RGB", (10, 10))
     md = ImageDraw.Draw(measure_img)
 
-    # Геометрия таблицы: № | время | примечание (3 столбца)
     bells_col_w = {"num": 70, "time": 230, "note": 200}
     bells_table_w = sum(bells_col_w.values())
     bells_img_w = bells_table_w + MARGIN * 2
@@ -437,22 +438,28 @@ def _render_bells_table(rows, headers, title_text, subtitle_text=None, title_col
         max_lines = max(max(len(l) for l in cells_lines), 1)
         row_h_list.append(max(ROW_MIN_H, max_lines * LINE_H + 2 * PAD_V))
 
-    body_h = TITLE_H + (TITLE_H if subtitle_text else 0)
-    body_h += HEADER_H + sum(row_h_list) + MARGIN
-    total_h = WATERMARK_TOP_STRIP + WATERMARK_H + 2 + body_h
+    body_h = TITLE_H + WATERMARK_H + 6 + HEADER_H + sum(row_h_list) + MARGIN
+    total_h = body_h
 
     img = Image.new("RGB", (bells_img_w, total_h), COLOR_BG)
     draw = ImageDraw.Draw(img)
-    _draw_watermark(img, draw, _get_watermark_text())
+    y = MARGIN
 
-    y = WATERMARK_TOP_STRIP + WATERMARK_H + 2 + MARGIN
     tw = draw.textlength(title_text, font=FONT_TITLE)
     draw.text(((bells_img_w - tw) // 2, y), title_text, fill=title_color, font=FONT_TITLE)
     y += TITLE_H
-    if subtitle_text:
-        sw = draw.textlength(subtitle_text, font=FONT_CELL)
-        draw.text(((bells_img_w - sw) // 2, y), subtitle_text, fill=COLOR_TEXT, font=FONT_CELL)
-        y += TITLE_H
+
+    _draw_watermark_strip(draw, bells_img_w, y)
+    # Для водяного знака на звонках — нужно использовать ширину bells_img_w
+    wm_text = _get_watermark_text()
+    wm_tw = draw.textlength(wm_text, font=FONT_WM)
+    wm_tx = (bells_img_w - wm_tw) // 2
+    wm_ty = y + 4 + (WATERMARK_H - 13) // 2
+    draw.text((wm_tx, wm_ty), wm_text, fill=COLOR_WM_TEXT, font=FONT_WM)
+    ay = wm_ty + 6
+    draw.rectangle([wm_tx - 22, ay, wm_tx - 6, ay + 2], fill=COLOR_WM_ACCENT)
+    draw.rectangle([wm_tx + wm_tw + 6, ay, wm_tx + wm_tw + 22, ay + 2], fill=COLOR_WM_ACCENT)
+    y += 4 + WATERMARK_H + 2
 
     x0 = MARGIN
     col_x = {
@@ -463,7 +470,7 @@ def _render_bells_table(rows, headers, title_text, subtitle_text=None, title_col
 
     draw.rectangle([x0, y, x0 + bells_table_w, y + HEADER_H], fill=COLOR_HEADER_BG, outline=COLOR_GRID)
     for label, key in headers:
-        draw.text((col_x[key] + 6, y + 5), label, fill=COLOR_HEADER_TEXT, font=FONT_HEADER)
+        draw.text((col_x[key] + 6, y + 4), label, fill=COLOR_HEADER_TEXT, font=FONT_HEADER)
     y += HEADER_H
 
     for idx, (row, row_h) in enumerate(zip(rows, row_h_list)):
@@ -480,13 +487,12 @@ def _render_bells_table(rows, headers, title_text, subtitle_text=None, title_col
         y += row_h
 
     buf = io.BytesIO()
-    img.save(buf, format="PNG")
+    img.save(buf, format="PNG", optimize=True)
     buf.seek(0)
     return buf.getvalue()
 
 
 def render_bells_regular_image() -> bytes:
-    """Обычные дни: А и Б корпус в одной картинке. Столбцы: № | А корпус | Б корпус."""
     rows_a_b = [
         ("0 пара", "8:00 – 9:10", "8:00 – 9:10"),
         ("1 пара", "9:20 – 10:50", "9:20 – 10:50"),
@@ -500,7 +506,6 @@ def render_bells_regular_image() -> bytes:
         rows_a_b,
         [("№", "num"), ("По А корпусу", "time"), ("По Б корпусу", "note")],
         "📞 Расписание звонков — обычные дни",
-        "Для обоих корпусов. Перемены между парами 1–6 — 10 минут.",
     )
 
 
@@ -519,7 +524,6 @@ def render_bells_preholiday_image() -> bytes:
         rows_pre,
         [("№", "num"), ("Время", "time"), ("Примечание", "note")],
         "📞 Расписание звонков — предпраздничный день",
-        "Занятия по 60 минут. Перемены между остальными парами — по 10 минут.",
     )
 
 

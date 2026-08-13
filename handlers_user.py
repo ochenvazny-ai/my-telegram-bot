@@ -49,12 +49,16 @@ async def handle_menu_reply_button(update: Update, context: ContextTypes.DEFAULT
         await start(update, context)
 
 
-async def _send_image(update: Update, context: ContextTypes.DEFAULT_TYPE, kind: str, fallback_render, back_to: str):
+async def _send_image(update: Update, context: ContextTypes.DEFAULT_TYPE,
+                      kind: str, fallback_render, back_to: str, loading_text: str = "⏳ Готовлю изображение..."):
+    """Универсальная отправка картинки. После — кнопка «Назад» ведёт на back_to."""
     query = update.callback_query
+    await query.answer()
+
     cached = await asyncio.to_thread(db.get_image, kind)
     if not cached:
         try:
-            await query.edit_message_text("⏳ Готовлю изображение...")
+            await query.edit_message_text(loading_text)
         except Exception:
             pass
         try:
@@ -73,11 +77,16 @@ async def _send_image(update: Update, context: ContextTypes.DEFAULT_TYPE, kind: 
     else:
         data = cached
 
-    await context.bot.send_photo(
-        chat_id=update.effective_chat.id,
-        photo=io.BytesIO(data),
-        reply_markup=kb.back_button(back_to),
-    )
+    # Отправляем фото отдельным сообщением с кнопкой «Назад» (НЕ редактируем)
+    try:
+        await context.bot.send_photo(
+            chat_id=update.effective_chat.id,
+            photo=io.BytesIO(data),
+            reply_markup=kb.back_button(back_to),
+        )
+    except Exception:
+        logger.exception("Не удалось отправить фото %s", kind)
+    # Исходное сообщение с кнопкой «Обычные/Предпраздничные» удаляем
     try:
         await query.delete_message()
     except Exception:
@@ -108,34 +117,29 @@ async def main_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 
 async def show_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Замены: текст присылается новым сообщением, главное меню — отдельным ниже."""
+    """Замены: новым сообщением + ниже меню."""
     query = update.callback_query
     await query.answer()
     user_id = update.effective_user.id
     admin = await asyncio.to_thread(db.is_admin, user_id)
-    # Удаляем сообщение с кнопкой «Замены» (чтобы не висело)
     try:
         await query.delete_message()
     except Exception:
         pass
-    # Сразу показываем «Загружаю...» временным сообщением
     loading = await context.bot.send_message(
         chat_id=update.effective_chat.id,
         text="⏳ Загружаю замены...",
     )
     text, ok = await sched.get_schedule_for_display()
-    # Удаляем «Загружаю...»
     try:
         await loading.delete()
     except Exception:
         pass
-    # Присылаем расписание отдельным сообщением
     await context.bot.send_message(
         chat_id=update.effective_chat.id,
         text=text,
         parse_mode='HTML',
     )
-    # И отдельным сообщением — главное меню
     await context.bot.send_message(
         chat_id=update.effective_chat.id,
         text="Главное меню:",
@@ -160,61 +164,21 @@ async def show_hw(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def show_announcements(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Объявления: каждое — отдельным сообщением (фото или текст), потом меню."""
+    """Объявления: одним сообщением, кнопка «Назад» — к главному меню."""
     query = update.callback_query
     await query.answer()
-    user_id = update.effective_user.id
-    admin = await asyncio.to_thread(db.is_admin, user_id)
-    try:
-        await query.delete_message()
-    except Exception:
-        pass
-    loading = await context.bot.send_message(
-        chat_id=update.effective_chat.id,
-        text="⏳ Загружаю объявления...",
-    )
     anns = await asyncio.to_thread(db.get_active_announcements)
-    try:
-        await loading.delete()
-    except Exception:
-        pass
-
     if not anns:
-        await context.bot.send_message(
-            chat_id=update.effective_chat.id,
-            text="📭 Активных объявлений нет.",
-        )
+        text = "📭 Активных объявлений нет."
     else:
+        lines = ["📢 Активные объявления:\n"]
         for idx, (_, ann_text, created_at, is_note, photo_id) in enumerate(anns, start=1):
             date_part = created_at.split(" ")[0] if created_at else ""
-            prefix = "📝 " if is_note else ""
-            header = f"{idx}️⃣ {prefix}{date_part}"
-            # Если есть фото — присылаем фото с подписью
-            if photo_id:
-                caption = f"{header}\n{ann_text}" if ann_text else f"{header}"
-                try:
-                    await context.bot.send_photo(
-                        chat_id=update.effective_chat.id,
-                        photo=photo_id,
-                        caption=caption,
-                    )
-                except Exception:
-                    logger.exception("Не удалось отправить фото объявления %s", idx)
-                    await context.bot.send_message(
-                        chat_id=update.effective_chat.id,
-                        text=f"{header}\n{ann_text}",
-                    )
-            else:
-                await context.bot.send_message(
-                    chat_id=update.effective_chat.id,
-                    text=f"{header}\n{ann_text}",
-                )
-
-    await context.bot.send_message(
-        chat_id=update.effective_chat.id,
-        text="Главное меню:",
-        reply_markup=kb.main_menu_kb(admin),
-    )
+            prefix = "📝 " if is_note else ("📎 " if photo_id else "")
+            body = ann_text if ann_text else "(без текста — только вложение)"
+            lines.append(f"{idx}️⃣ {prefix}{date_part}: {body}")
+        text = "\n".join(lines)
+    await query.edit_message_text(text, reply_markup=kb.back_button())
 
 
 # ---- ДОП. ЗАНЯТИЯ ----
@@ -265,31 +229,35 @@ async def extra_class_open(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.answer("❌ Занятие не найдено.", show_alert=True)
         return
     _id, subject, description, photo_id = rec
-    # Описание всегда показываем отдельным сообщением, фото — отдельным
+
+    # Если есть фото — шлём фото отдельным сообщением (без кнопки)
     if photo_id:
         try:
             await context.bot.send_photo(
                 chat_id=update.effective_chat.id,
                 photo=photo_id,
-                reply_markup=kb.back_button("menu_extra"),
             )
         except Exception:
             logger.exception("Не удалось отправить фото доп. занятия")
+
+    # Описание отдельным сообщением с кнопкой «Назад»
     if description:
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
             text=f"📚 <b>{subject}</b>\n\n{description}",
             parse_mode='HTML',
-            reply_markup=kb.back_button("menu_extra") if not photo_id else None,
+            reply_markup=kb.back_button("menu_extra"),
         )
     else:
-        if not photo_id:
-            await context.bot.send_message(
-                chat_id=update.effective_chat.id,
-                text=f"📚 <b>{subject}</b>",
-                parse_mode='HTML',
-                reply_markup=kb.back_button("menu_extra"),
-            )
+        # Только название — с кнопкой «Назад»
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text=f"📚 <b>{subject}</b>",
+            parse_mode='HTML',
+            reply_markup=kb.back_button("menu_extra"),
+        )
+
+    # Удаляем исходный список
     try:
         await query.delete_message()
     except Exception:
@@ -320,8 +288,6 @@ async def show_bells_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def show_bells_regular(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
     await _send_image(
         update, context,
         kind="bells_reg",
@@ -331,8 +297,6 @@ async def show_bells_regular(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 
 async def show_bells_preholiday(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
     await _send_image(
         update, context,
         kind="bells_pre",
@@ -359,6 +323,7 @@ async def show_sched_img_menu(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 
 async def send_schedule_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Картинки расписания (Числ/Знам/Сравнение) — отдельным сообщением с кнопкой «Назад»."""
     query = update.callback_query
     await query.answer()
     choice = query.data
@@ -395,11 +360,15 @@ async def send_schedule_image(update: Update, context: ContextTypes.DEFAULT_TYPE
     else:
         data = cached
 
-    await context.bot.send_photo(
-        chat_id=update.effective_chat.id,
-        photo=io.BytesIO(data),
-        reply_markup=kb.back_button("info_sched_img"),
-    )
+    # Отправляем фото отдельным сообщением с кнопкой «Назад»
+    try:
+        await context.bot.send_photo(
+            chat_id=update.effective_chat.id,
+            photo=io.BytesIO(data),
+            reply_markup=kb.back_button("info_sched_img"),
+        )
+    except Exception:
+        logger.exception("Не удалось отправить фото расписания")
     try:
         await query.delete_message()
     except Exception:
