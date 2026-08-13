@@ -158,7 +158,11 @@ async def show_extra_classes(update: Update, context: ContextTypes.DEFAULT_TYPE)
 async def extra_class_open(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    item_id = int(query.data.split("_")[1])
+    try:
+        item_id = int(query.data.split("_")[2])
+    except (ValueError, IndexError):
+        logger.warning("Bad callback_data: %s", query.data)
+        return
     rec = await asyncio.to_thread(db.get_extra_class, item_id)
     if not rec:
         await query.answer("❌ Занятие не найдено.", show_alert=True)
@@ -184,7 +188,10 @@ async def extra_class_open(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 parse_mode='HTML',
                 reply_markup=kb.back_button("menu_extra"),
             )
-        await query.delete_message()
+        try:
+            await query.delete_message()
+        except Exception:
+            pass
     except Exception:
         logger.exception("Не удалось отправить доп. занятие %s", item_id)
         await query.edit_message_text(
@@ -248,7 +255,7 @@ async def show_sched_img_menu(update: Update, context: ContextTypes.DEFAULT_TYPE
 async def send_schedule_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    choice = query.data  # schedimg_num / schedimg_den / schedimg_cmp
+    choice = query.data
     kind = "cmp"
     if choice == "schedimg_num":
         kind = "num"
@@ -257,7 +264,6 @@ async def send_schedule_image(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     cached = await asyncio.to_thread(db.get_image, kind)
     if not cached:
-        # Если кэш пуст (первый запуск) — генерим «на лету» и сохраняем
         await query.edit_message_text("⏳ Готовлю изображение (первый раз)...")
         try:
             if kind == "num":

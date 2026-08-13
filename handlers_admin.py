@@ -57,7 +57,6 @@ async def cancel_conversation(update: Update, context: ContextTypes.DEFAULT_TYPE
     return ConversationHandler.END
 
 
-# ============ ВЕРХНИЙ УРОВЕНЬ ============
 async def hw_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -106,7 +105,6 @@ async def bot_settings_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.edit_message_text("⚙️ Настройки бота:", reply_markup=kb.bot_settings_kb())
 
 
-# ============ СМЕНА ============
 async def shift_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -128,7 +126,6 @@ async def shift_set(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.edit_message_text(f"✅ Смена изменена на {shift} смену.", reply_markup=kb.admin_panel_kb())
 
 
-# ============ ДОБАВЛЕНИЕ ДЗ ============
 async def add_hw_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -215,7 +212,6 @@ async def del_hw_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text("\n".join(lines), reply_markup=kb.delete_hw_kb(tasks))
 
 
-# ============ ОБЪЯВЛЕНИЯ ============
 async def add_ann_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -257,7 +253,7 @@ async def add_ann_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     text = context.user_data.get('ann_text', '')
     author_id = update.effective_user.id
-    ann_id = await asyncio.to_thread(db.add_announcement_db, text, author_id)
+    await asyncio.to_thread(db.add_announcement_db, text, author_id)
 
     if query.data == "ann_send_yes":
         await query.edit_message_text("⏳ Рассылаю объявление...")
@@ -354,7 +350,6 @@ async def add_replnote_confirm(update: Update, context: ContextTypes.DEFAULT_TYP
     return ConversationHandler.END
 
 
-# ============ ПРЕДПРАЗДНИЧНЫЕ ДНИ ============
 async def set_ph_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -439,7 +434,6 @@ async def unset_ph_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 
-# ============ АДМИНЫ ============
 async def add_admin_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -534,7 +528,6 @@ async def view_admins(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.edit_message_text("\n".join(lines), reply_markup=kb.back_button("a_admins_menu"))
 
 
-# ============ ДОП. ЗАНЯТИЯ (АДМИН) ============
 async def extra_add_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -596,8 +589,7 @@ async def extra_add_skip_photo(update: Update, context: ContextTypes.DEFAULT_TYP
     query = update.callback_query
     await query.answer()
     subject = context.user_data.get('extra_subject', '')
-    description = context.user_data.get('extra_description_only', '')
-    new_id = await asyncio.to_thread(db.add_extra_class, subject, description or None, None)
+    new_id = await asyncio.to_thread(db.add_extra_class, subject, None, None)
     if new_id:
         await query.message.reply_text(f"✅ Дополнительное занятие «{subject}» добавлено.")
     else:
@@ -666,7 +658,6 @@ async def extra_view(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.edit_message_text("\n".join(lines), reply_markup=kb.back_button("a_extra_menu"))
 
 
-# ============ НАСТРОЙКИ БОТА ============
 async def set_group_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -755,7 +746,6 @@ async def set_bot_photo_finish(update: Update, context: ContextTypes.DEFAULT_TYP
     return ConversationHandler.END
 
 
-# ============ РЕДАКТОР РАСПИСАНИЯ ============
 async def edit_schedule_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -796,9 +786,6 @@ async def sched_upload_start(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 
 def _parse_schedule_xlsx(file_bytes: bytes):
-    """Парсит .xlsx по шаблону. Возвращает (result, errors).
-    result: {(week_type, day_index): [entries]} — оба типа недели инициализируются ПУСТЫМИ списками
-    на строке с названием дня, чтобы полностью пустой день реально стирал старые записи."""
     import openpyxl
     wb = openpyxl.load_workbook(io.BytesIO(file_bytes), data_only=True)
     ws = wb.active
@@ -821,7 +808,6 @@ def _parse_schedule_xlsx(file_bytes: bytes):
             day_norm = col0.strip().lower()
             if day_norm in WEEKDAYS_RU:
                 current_day = WEEKDAYS_RU.index(day_norm)
-                # Инициализируем ОБА типа недели пустыми списками — иначе пустой день не сотрёт старые записи
                 result.setdefault(("Числитель", current_day), [])
                 result.setdefault(("Знаменатель", current_day), [])
             continue

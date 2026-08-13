@@ -22,22 +22,25 @@ COL_W = {"num": 34, "subject": 190, "teacher": 160, "room": 80}
 TABLE_W = sum(COL_W.values())
 IMG_W = TABLE_W + MARGIN * 2
 
-# ---------- Цвета ----------
-COLOR_BG = (255, 255, 255)
-COLOR_GRID = (190, 190, 190)
-COLOR_DAY_BG = (44, 62, 80)
-COLOR_DAY_TEXT = (255, 255, 255)
-COLOR_HEADER_BG = (222, 226, 230)
-COLOR_HEADER_TEXT = (20, 20, 20)
-COLOR_ROW_EVEN = (255, 255, 255)
-COLOR_ROW_ODD = (245, 246, 247)
-COLOR_TEXT = (20, 20, 20)
-COLOR_TITLE = (20, 20, 20)
+# ---------- Палитра ----------
+# Vanilla Custard #FFF9EB — основной фон
+# Misty Sage      #9FB2AC — знаменатель (мягкий серо-зелёный)
+# Bloodstone      #5D0D18 — числитель + совпадение в сравнении (тёмно-бордовый)
 
-# Новая палитра
-COLOR_NUM = (198, 40, 40)        # Числитель — красный
-COLOR_DEN = (30, 80, 180)        # Знаменатель — синий
-COLOR_MATCH = (30, 140, 60)      # Совпадение в сравнении — зелёный
+COLOR_BG = (255, 249, 235)            # Vanilla Custard
+COLOR_GRID = (200, 195, 180)          # приглушённая сетка
+COLOR_DAY_BG = (50, 40, 38)           # глубокий тёмный для баннера дня (нейтральный)
+COLOR_DAY_TEXT = (255, 249, 235)      # Vanilla Custard
+COLOR_HEADER_BG = (235, 228, 210)     # чуть темнее фона для шапки таблицы
+COLOR_HEADER_TEXT = (50, 40, 38)      # почти чёрный
+COLOR_ROW_EVEN = (255, 249, 235)      # Vanilla Custard
+COLOR_ROW_ODD = (245, 239, 220)       # приглушённый кремовый
+COLOR_TEXT = (40, 32, 28)             # основной текст — почти чёрный
+COLOR_TITLE = (93, 13, 24)            # Bloodstone — заголовок расписания
+
+COLOR_NUM = (93, 13, 24)              # Bloodstone — числитель
+COLOR_DEN = (159, 178, 172)           # Misty Sage — знаменатель
+COLOR_MATCH = (93, 13, 24)            # Bloodstone — совпадение в сравнении
 
 
 # ---------- Шрифты ----------
@@ -201,13 +204,13 @@ def render_schedule_image(week_type: str) -> bytes:
         for idx, (pair_num, lines_s, lines_t, lines_r, row_h) in enumerate(rows):
             bg = COLOR_ROW_EVEN if idx % 2 == 0 else COLOR_ROW_ODD
             draw.rectangle([x0, y, x0 + TABLE_W, y + row_h], fill=bg, outline=COLOR_GRID)
-            # Номер пары — в цвете недели, жирный
+            # ТОЛЬКО номер пары — в цвете недели, жирный
             draw.text((col_x["num"] + 10, y + (row_h - LINE_H) // 2), str(pair_num),
                        fill=accent, font=FONT_CELL_BOLD)
-            # Предмет — в цвете недели
+            # ТОЛЬКО предмет — в цвете недели
             _draw_lines_centered(draw, lines_s, FONT_CELL_BOLD, col_x["subject"] + 6, y, row_h,
                                   COL_W["subject"] - 10, accent)
-            # Преподаватель и аудитория — нейтрально
+            # Преподаватель и аудитория — обычным почти-чёрным
             _draw_lines_centered(draw, lines_t, FONT_CELL, col_x["teacher"] + 6, y, row_h,
                                   COL_W["teacher"] - 10, COLOR_TEXT)
             _draw_lines_centered(draw, lines_r, FONT_CELL, col_x["room"] + 6, y, row_h,
@@ -226,7 +229,7 @@ def _render_empty_image(title: str, message: str) -> bytes:
     tw = draw.textlength(title, font=FONT_TITLE)
     draw.text(((IMG_W - tw) // 2, 20), title, fill=COLOR_TITLE, font=FONT_TITLE)
     mw = draw.textlength(message, font=FONT_CELL)
-    draw.text(((IMG_W - mw) // 2, 60), message, fill=(120, 120, 120), font=FONT_CELL)
+    draw.text(((IMG_W - mw) // 2, 60), message, fill=COLOR_TEXT, font=FONT_CELL)
     buf = io.BytesIO()
     img.save(buf, format="PNG")
     buf.seek(0)
@@ -237,7 +240,7 @@ def _render_empty_image(title: str, message: str) -> bytes:
 def _cmp_field(md, num_val: str, den_val: str, max_width: int):
     equal = (num_val or "") == (den_val or "")
     if equal:
-        lines = _wrap_lines(md, num_val, FONT_CELL, max_width)
+        lines = _wrap_lines(md, num_val, FONT_CELL_BOLD, max_width)
         return True, lines, lines, len(lines) * LINE_H
     lines_num = _wrap_lines(md, num_val, FONT_CELL_BOLD, max_width) if num_val else [""]
     lines_den = _wrap_lines(md, den_val, FONT_CELL_BOLD, max_width) if den_val else [""]
@@ -285,11 +288,11 @@ def render_comparison_image() -> bytes:
     draw = ImageDraw.Draw(img)
 
     title = "Расписание — Сравнение"
-    subtitle = "Совпадения — зелёным, различия: числитель — красный, знаменатель — синий"
+    subtitle = "Совпадения — Bloodstone, различия: числитель — Bloodstone, знаменатель — Misty Sage"
     tw = draw.textlength(title, font=FONT_TITLE)
     draw.text(((IMG_W - tw) // 2, MARGIN), title, fill=COLOR_TITLE, font=FONT_TITLE)
     sw = draw.textlength(subtitle, font=FONT_CELL)
-    draw.text(((IMG_W - sw) // 2, MARGIN + 22), subtitle, fill=COLOR_MATCH, font=FONT_CELL)
+    draw.text(((IMG_W - sw) // 2, MARGIN + 22), subtitle, fill=COLOR_TEXT, font=FONT_CELL)
 
     y = MARGIN + TITLE_H * 2
     x0 = MARGIN
@@ -304,19 +307,20 @@ def render_comparison_image() -> bytes:
         cx = col_x[col_key] + 6
         cw = COL_W[col_key] - 10
         if eq:
+            # Совпало — Bloodstone, жирным
             _draw_lines_centered(draw, lines_num, FONT_CELL_BOLD, cx, row_top, row_h, cw, COLOR_MATCH)
             return
         block_h = len(lines_num) * LINE_H + SPLIT_GAP + len(lines_den) * LINE_H
         y_start = row_top + max(0, (row_h - block_h) // 2)
         yy = y_start
-        # сверху — числитель (красный)
+        # Числитель — Bloodstone
         for line in lines_num:
             draw.text((cx, yy), line, fill=COLOR_NUM, font=FONT_CELL_BOLD)
             yy += LINE_H
         yy += SPLIT_GAP
         den_top = yy
         den_h = len(lines_den) * LINE_H
-        # тонкая синяя рамка вокруг значения знаменателя
+        # Знаменатель — Misty Sage, в рамке цвета Misty Sage
         draw.rectangle(
             [col_x[col_key] + 2, den_top - 2, col_x[col_key] + COL_W[col_key] - 2, den_top + den_h + 2],
             outline=COLOR_DEN, width=1,
@@ -361,7 +365,6 @@ def render_comparison_image() -> bytes:
 
 # ==================== ПРЕДГЕНЕРАЦИЯ КЭША ====================
 def regenerate_all_cached_images() -> dict[str, bool]:
-    """Генерит и сохраняет в БД все 3 PNG. Возвращает {kind: ok}."""
     results = {}
     for kind in ("num", "den", "cmp"):
         try:

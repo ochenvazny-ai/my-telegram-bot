@@ -89,7 +89,6 @@ def extra_skip_photo_kb():
 # ---------- АДМИН-ПАНЕЛЬ ----------
 def admin_panel_kb():
     kb = [
-        [InlineKeyboardButton("🔁 Изменить смену", callback_data="a_shift")],
         [InlineKeyboardButton("📚 Домашнее задание", callback_data="a_hw_menu")],
         [InlineKeyboardButton("📢 Объявления", callback_data="a_ann_menu")],
         [InlineKeyboardButton("📅 Праздничный день", callback_data="a_ph_menu")],
@@ -106,7 +105,7 @@ def shift_choice_kb():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("1 смена", callback_data="shiftset_1")],
         [InlineKeyboardButton("2 смена", callback_data="shiftset_2")],
-        [InlineKeyboardButton("❌ Отмена", callback_data="admin_panel")],
+        [InlineKeyboardButton("🔙 Назад", callback_data="a_bot_settings")],
     ])
 
 
@@ -190,6 +189,7 @@ def extra_delete_kb(items):
 # ---------- НАСТРОЙКИ БОТА ----------
 def bot_settings_kb():
     return InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔁 Изменить смену", callback_data="a_shift")],
         [InlineKeyboardButton("📝 Изменить группу", callback_data="a_set_group")],
         [InlineKeyboardButton("✏️ Изменить название бота", callback_data="a_set_botname")],
         [InlineKeyboardButton("🖼️ Изменить картинку бота", callback_data="a_set_botphoto")],
