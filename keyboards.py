@@ -34,7 +34,6 @@ def confirm_kb(action: str, item_id):
     ])
 
 
-# ---------- ИНФО ----------
 def info_menu_kb():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("📞 Расписание звонков", callback_data="info_bells")],
@@ -60,7 +59,6 @@ def schedule_img_choice_kb():
     ])
 
 
-# ---------- ДОП. ЗАНЯТИЯ (пользователь) ----------
 def extra_classes_list_kb(items):
     buttons = []
     for idx, item in enumerate(items, start=1):
@@ -86,7 +84,6 @@ def ann_skip_photo_kb():
     ])
 
 
-# ---------- АДМИН-ПАНЕЛЬ ----------
 def admin_panel_kb():
     kb = [
         [InlineKeyboardButton("📚 Домашнее задание", callback_data="a_hw_menu")],
@@ -147,7 +144,6 @@ def replnote_confirm_kb():
     ])
 
 
-# ---------- ДОП. ЗАНЯТИЯ (админ) ----------
 def extra_admin_menu_kb():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("➕ Добавить занятие", callback_data="a_add_extra")],
@@ -167,7 +163,6 @@ def extra_delete_kb(items):
     return InlineKeyboardMarkup(buttons)
 
 
-# ---------- НАСТРОЙКИ БОТА ----------
 def bot_settings_kb():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("🔁 Изменить смену", callback_data="a_shift")],
@@ -179,7 +174,6 @@ def bot_settings_kb():
     ])
 
 
-# ---------- СПИСКИ ДЛЯ УДАЛЕНИЯ ----------
 def delete_hw_kb(tasks):
     if not tasks:
         return None
@@ -219,12 +213,12 @@ def delete_admin_kb(admins, current_user_id, initial_admin_id):
     return InlineKeyboardMarkup(buttons)
 
 
-# ---------- РЕДАКТОР РАСПИСАНИЯ ----------
 def schedule_edit_menu_kb():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("📤 Загрузить из Excel", callback_data="sched_upload")],
         [InlineKeyboardButton("📝 Редактировать по дням", callback_data="sched_by_day")],
         [InlineKeyboardButton("🗑 Удалить все пары на день", callback_data="a_del_all_day")],
+        [InlineKeyboardButton("📣 Разослать замены сейчас", callback_data="force_repl_broadcast")],
         [InlineKeyboardButton("🔙 Назад", callback_data="a_bot_settings")],
     ])
 

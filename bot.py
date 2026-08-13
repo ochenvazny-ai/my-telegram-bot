@@ -25,6 +25,9 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Глобальная ссылка на bot для рассылки из schedule_service.py
+_broadcast_bot = None
+
 
 async def error_handler(update, context):
     logger.error("Необработанное исключение:", exc_info=context.error)
@@ -150,6 +153,7 @@ def build_conversations():
 
 
 def main():
+    global _broadcast_bot
     try:
         asyncio.get_event_loop()
     except RuntimeError:
@@ -158,6 +162,7 @@ def main():
     db.init_default_schedule()
 
     application = Application.builder().token(BOT_TOKEN).build()
+    _broadcast_bot = application.bot  # для рассылки из schedule_service
     application.add_error_handler(error_handler)
 
     application.add_handler(CommandHandler("start", hu.start))
@@ -213,8 +218,8 @@ def main():
     application.add_handler(CallbackQueryHandler(ha.extra_del_confirm, pattern="^confirm_delextra_\\d+$"))
     application.add_handler(CallbackQueryHandler(ha.extra_view, pattern="^a_view_extra$"))
 
-    # Расписание (теперь в настройках бота)
     application.add_handler(CallbackQueryHandler(ha.edit_schedule_menu, pattern="^a_sched_menu$"))
+    application.add_handler(CallbackQueryHandler(ha.force_broadcast_replacements_btn, pattern="^force_repl_broadcast$"))
     application.add_handler(CallbackQueryHandler(ha.del_all_day_menu, pattern="^a_del_all_day$"))
     application.add_handler(CallbackQueryHandler(ha.sched_by_day_start, pattern="^sched_by_day$"))
     application.add_handler(CallbackQueryHandler(ha.sched_day_chosen, pattern="^schedday_\\d+$"))

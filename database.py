@@ -186,17 +186,9 @@ def deactivate_announcement_db(ann_id: int) -> bool:
         return False
 
 
-# ---------- PRE-HOLIDAYS (больше не используется, оставлено для совместимости) ----------
+# ---------- PRE-HOLIDAYS (заглушки) ----------
 def is_pre_holiday_today(mmdd: str) -> bool:
-    try:
-        with get_cursor() as cur:
-            cur.execute(
-                "SELECT 1 FROM pre_holidays WHERE date = %s AND is_active = true;", (mmdd,)
-            )
-            return cur.fetchone() is not None
-    except Exception:
-        logger.exception("is_pre_holiday_today failed for %s", mmdd)
-        return False
+    return False
 
 
 def set_pre_holiday(mmdd: str) -> bool:
@@ -235,7 +227,7 @@ def init_default_schedule():
                         "VALUES (%s,%s,%s,%s,%s,%s,NOW()) ON CONFLICT DO NOTHING;",
                         ("Знаменатель", day, pair, f"{pair} пара", "1 преподаватель", "1 Кабинет"),
                     )
-        logger.info("Заводское расписание-заглушка загружено")
+        logger.info("Заводское расписание загружено")
     except Exception:
         logger.exception("init_default_schedule failed")
 
@@ -393,6 +385,15 @@ def get_bot_display_name() -> str:
 
 def set_bot_display_name(name: str) -> bool:
     return set_setting("bot_display_name", name)
+
+
+def get_last_replacements_date() -> str:
+    """Возвращает дату (в формате ISO YYYY-MM-DD), на которую последний раз рассылали замены."""
+    return get_setting("last_replacements_date", "")
+
+
+def set_last_replacements_date(date_iso: str) -> bool:
+    return set_setting("last_replacements_date", date_iso)
 
 
 # ---------- SCHEDULE IMAGES CACHE ----------

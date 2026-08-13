@@ -73,6 +73,9 @@ async def main_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 
 async def show_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Замены: новым сообщением + ниже меню.
+    Перед показом — проверка, не появились ли новые замены (по дате с сайта).
+    Если да — авторассылка остальным."""
     query = update.callback_query
     await query.answer()
     user_id = update.effective_user.id
@@ -90,6 +93,11 @@ async def show_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await loading.delete()
     except Exception:
         pass
+    # Проверка и авторассылка новых замен (реактивно, при нажатии)
+    try:
+        await sched.check_and_broadcast_new_replacements(user_id)
+    except Exception:
+        logger.exception("check_and_broadcast_new_replacements failed")
     await context.bot.send_message(
         chat_id=update.effective_chat.id,
         text=text,
@@ -234,7 +242,6 @@ async def show_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def show_bells_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    # Если это нажатие с фото (кнопка «Назад» под картинкой) — удаляем фото и шлём меню текстом
     if query.message and query.message.photo:
         try:
             await query.message.delete()
@@ -250,7 +257,6 @@ async def show_bells_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def show_bells_regular(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Показывает картинку отдельным сообщением. Кнопка «Назад» под фото."""
     query = update.callback_query
     await query.answer()
     kind = "bells_reg"
@@ -266,10 +272,7 @@ async def show_bells_regular(update: Update, context: ContextTypes.DEFAULT_TYPE)
         except Exception:
             logger.exception("Не удалось сгенерировать bells_reg")
             try:
-                await query.edit_message_text(
-                    "❌ Ошибка генерации.",
-                    reply_markup=kb.bells_choice_kb(),
-                )
+                await query.edit_message_text("❌ Ошибка генерации.", reply_markup=kb.bells_choice_kb())
             except Exception:
                 pass
             return
@@ -303,10 +306,7 @@ async def show_bells_preholiday(update: Update, context: ContextTypes.DEFAULT_TY
         except Exception:
             logger.exception("Не удалось сгенерировать bells_pre")
             try:
-                await query.edit_message_text(
-                    "❌ Ошибка генерации.",
-                    reply_markup=kb.bells_choice_kb(),
-                )
+                await query.edit_message_text("❌ Ошибка генерации.", reply_markup=kb.bells_choice_kb())
             except Exception:
                 pass
             return

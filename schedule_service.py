@@ -185,10 +185,6 @@ async def _fetch_site_html(site_url: str) -> str | None:
         return None
 
 
-def _pre_holiday_note(file_date: date_cls, today: date_cls) -> str | None:
-    return None
-
-
 async def get_schedule_for_display() -> tuple[str, bool]:
     shift = await asyncio.to_thread(db.get_current_shift)
     site_url = get_site_url(shift)
@@ -241,3 +237,92 @@ async def get_schedule_for_display() -> tuple[str, bool]:
         note = "Замены на эту дату ещё не известны."
         return format_schedule_message(file_date, week_type, entries, site_url, note=note,
                                         replacement_notes=repl_notes, shift=shift), True
+
+
+# ========== Рассылка новых замен ==========
+async def fetch_replacements_data() -> tuple[str, list[dict], str] | None:
+    """Возвращает (date_iso, replacements, formatted_message) или None при ошибке.
+    date_iso — дата, на которую замены (например "2024-10-25").
+    replacements — список словарей.
+    formatted_message — готовый текст для рассылки."""
+    shift = await asyncio.to_thread(db.get_current_shift)
+    site_url = get_site_url(shift)
+    html_text = await _fetch_site_html(site_url)
+    if not html_text:
+        return None
+    file_date, week_type = extract_metadata_from_html(html_text)
+    if not file_date or not week_type:
+        return None
+    if WEEKDAYS_RU[file_date.weekday()] == "воскресенье":
+        return (file_date.isoformat(), [], f"📅 {format_date_russian(file_date)} — воскресенье, пар нет.")
+    day_of_week = file_date.weekday()
+    replacements = parse_replacements_from_html(html_text)
+    entries = await asyncio.to_thread(build_final_entries, week_type, day_of_week, replacements)
+    await asyncio.to_thread(db.save_schedule_cache, file_date, week_type, WEEKDAYS_RU[day_of_week], entries)
+    repl_notes = await asyncio.to_thread(db.get_active_replacement_notes)
+    text = format_schedule_message(file_date, week_type, entries, site_url,
+                                    note="", replacement_notes=repl_notes, shift=shift)
+    return (file_date.isoformat(), replacements, text)
+
+
+async def check_and_broadcast_new_replacements(initiator_user_id: int) -> int:
+    """Проверяет, появились ли новые замены (по дате).
+    Если да — рассылает всем (кроме инициатора) и обновляет last_replacements_date.
+    Возвращает количество отправленных уведомлений."""
+    data = await fetch_replacements_data()
+    if not data:
+        return 0
+    date_iso, replacements, formatted_text = data
+
+    last_date = await asyncio.to_thread(db.get_last_replacements_date)
+    if last_date == date_iso:
+        return 0  # уже разослано на эту дату
+
+    if not replacements:
+        # Замен нет, просто обновляем дату и не шлём
+        await asyncio.to_thread(db.set_last_replacements_date, date_iso)
+        return 0
+
+    # Есть новые замены — шлём всем, кроме инициатора
+    user_ids = await asyncio.to_thread(db.get_all_user_ids)
+    sent = 0
+    for uid in user_ids:
+        if uid == initiator_user_id:
+            continue
+        try:
+            await _send_broadcast(uid, formatted_text)
+            sent += 1
+        except Exception:
+            logger.warning("Не удалось отправить уведомление о заменах %s", uid)
+        await asyncio.sleep(0.05)
+
+    await asyncio.to_thread(db.set_last_replacements_date, date_iso)
+    return sent
+
+
+async def force_broadcast_replacements() -> int:
+    """Принудительная рассылка замен всем (для админа). Обновляет last_replacements_date."""
+    data = await fetch_replacements_data()
+    if not data:
+        return -1
+    date_iso, replacements, formatted_text = data
+    user_ids = await asyncio.to_thread(db.get_all_user_ids)
+    sent = 0
+    for uid in user_ids:
+        try:
+            await _send_broadcast(uid, formatted_text)
+            sent += 1
+        except Exception:
+            logger.warning("Не удалось отправить уведомление о заменах %s", uid)
+        await asyncio.sleep(0.05)
+    await asyncio.to_thread(db.set_last_replacements_date, date_iso)
+    return sent
+
+
+async def _send_broadcast(user_id: int, text: str):
+    """Обёртка для отправки из schedule_service — нужна для инъекции bot из bot.py."""
+    from bot import _broadcast_bot
+    if _broadcast_bot is None:
+        logger.error("_broadcast_bot is None — бот не инициализирован")
+        return
+    await _broadcast_bot.send_message(chat_id=user_id, text=text)
