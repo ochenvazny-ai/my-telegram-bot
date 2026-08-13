@@ -5,7 +5,7 @@ import psycopg2
 from psycopg2 import pool
 from psycopg2.extras import RealDictCursor
 
-from config import DATABASE_URL, GROUP_NAME
+from config import DATABASE_URL, GROUP_NAME, BOT_DISPLAY_NAME
 
 logger = logging.getLogger(__name__)
 
@@ -413,6 +413,14 @@ def set_group_name(name: str) -> bool:
     return set_setting("group_name", name)
 
 
+def get_bot_display_name() -> str:
+    return get_setting("bot_display_name", BOT_DISPLAY_NAME)
+
+
+def set_bot_display_name(name: str) -> bool:
+    return set_setting("bot_display_name", name)
+
+
 # ---------- SCHEDULE IMAGES CACHE ----------
 def get_image(kind: str) -> bytes | None:
     try:
@@ -478,7 +486,7 @@ def get_extra_class(item_id: int):
             row = cur.fetchone()
             if not row:
                 return None
-            return (row["id"], row["subject"], row["description"], r := row["photo_id"])
+            return (row["id"], row["subject"], row["description"], row["photo_id"])
     except Exception:
         logger.exception("get_extra_class failed for %s", item_id)
         return None

@@ -1,7 +1,6 @@
 import logging
 import asyncio
 import io
-from datetime import datetime
 from telegram import Update
 from telegram.ext import ContextTypes
 
@@ -22,44 +21,6 @@ INFO_TEXT = (
     "📚 Доп. занятия — дополнительные занятия с расписанием.\n"
     "ℹ️ Учебная инфа — расписание звонков и расписание пар.\n\n"
     "Успехов в учёбе! 📚"
-)
-
-BELLS_REGULAR_A_TEXT = (
-    "📞 Расписание звонков (обычные дни)\n"
-    "По А корпусу:\n\n"
-    "0 пара – 8:00 – 9:10\n"
-    "1 пара – 9:20 – 10:50\n"
-    "2 пара – 11:00 – 11:45, потом перерыв 40 мин, затем вторая часть с 12:25 до 13:10\n"
-    "3 пара – 13:20 – 14:50\n"
-    "4 пара – 15:05 – 16:35\n"
-    "5 пара – 17:05 – 18:35\n"
-    "6 пара – 18:45 – 19:55"
-)
-
-BELLS_REGULAR_B_TEXT = (
-    "📞 Расписание звонков (обычные дни)\n"
-    "По Б корпусу:\n\n"
-    "0 пара – 8:00 – 9:10\n"
-    "1 пара – 9:20 – 10:50\n"
-    "2 пара – 11:00 – 12:30 (сплошная, без разбивки), после неё перерыв 50 минут\n"
-    "3 пара – 13:20 – 14:50\n"
-    "4 пара – 15:05 – 16:35\n"
-    "5 пара – 17:05 – 18:35\n"
-    "6 пара – 18:45 – 19:55"
-)
-
-BELLS_PRE_HOLIDAY_TEXT = (
-    "📞 Расписание звонков (предпраздничный день)\n\n"
-    "Для всех корпусов. Занятия по 60 минут.\n"
-    "0 пара – 8:00 – 9:00\n"
-    "1 пара – 9:10 – 10:10\n"
-    "2 пара – 10:20 – 11:20\n"
-    "перемена 30 минут\n"
-    "3 пара – 11:50 – 12:50\n"
-    "4 пара – 13:00 – 14:00\n"
-    "5 пара – 14:10 – 15:10\n"
-    "6 пара – 15:20 – 16:20\n\n"
-    "Перемены между остальными парами – по 10 минут."
 )
 
 
@@ -88,10 +49,45 @@ async def handle_menu_reply_button(update: Update, context: ContextTypes.DEFAULT
         await start(update, context)
 
 
+async def _send_image(update: Update, context: ContextTypes.DEFAULT_TYPE, kind: str, fallback_render, back_to: str):
+    """Универсальная отправка картинки из кэша (или генерация на лету + сохранение)."""
+    query = update.callback_query
+    cached = await asyncio.to_thread(db.get_image, kind)
+    if not cached:
+        try:
+            await query.edit_message_text("⏳ Готовлю изображение...")
+        except Exception:
+            pass
+        try:
+            data = await asyncio.to_thread(fallback_render)
+            await asyncio.to_thread(db.save_image, kind, data)
+        except Exception:
+            logger.exception("Не удалось сгенерировать изображение %s", kind)
+            try:
+                await query.edit_message_text(
+                    "❌ Не удалось сформировать изображение. Попробуйте позже.",
+                    reply_markup=kb.back_button(back_to),
+                )
+            except Exception:
+                pass
+            return
+    else:
+        data = cached
+
+    await context.bot.send_photo(
+        chat_id=update.effective_chat.id,
+        photo=io.BytesIO(data),
+        reply_markup=kb.back_button(back_to),
+    )
+    try:
+        await query.delete_message()
+    except Exception:
+        pass
+
+
 async def main_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    # Главное меню может быть вызвано с сообщения-фото (после расписания/доп. занятий) — обработать оба случая
     if query.message and query.message.photo:
         try:
             await query.message.delete()
@@ -158,7 +154,6 @@ async def show_extra_classes(update: Update, context: ContextTypes.DEFAULT_TYPE)
     query = update.callback_query
     await query.answer()
     items = await asyncio.to_thread(db.get_active_extra_classes)
-    # Если сообщение с фото (после открытия конкретного занятия) — удаляем его и шлём новое текстовое
     if query.message and query.message.photo:
         try:
             await query.message.delete()
@@ -177,7 +172,6 @@ async def show_extra_classes(update: Update, context: ContextTypes.DEFAULT_TYPE)
             reply_markup=kb.extra_classes_list_kb(items),
         )
         return
-    # Обычное текстовое сообщение
     if not items:
         await query.edit_message_text(
             "📭 Нет активных дополнительных занятий.",
@@ -237,7 +231,6 @@ async def extra_class_open(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def show_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    # Если пришли с фото (после расписания) — удаляем и шлём текстовое
     if query.message and query.message.photo:
         try:
             await query.message.delete()
@@ -259,27 +252,26 @@ async def show_bells_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def show_bells_regular(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Сразу показывает картинку с А и Б корпусом (объединены)."""
     query = update.callback_query
     await query.answer()
-    await query.edit_message_text("Выберите корпус:", reply_markup=kb.bells_building_kb())
-
-
-async def show_bells_regular_a(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    await query.edit_message_text(BELLS_REGULAR_A_TEXT, reply_markup=kb.back_button("bells_regular"))
-
-
-async def show_bells_regular_b(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    await query.edit_message_text(BELLS_REGULAR_B_TEXT, reply_markup=kb.back_button("bells_regular"))
+    await _send_image(
+        update, context,
+        kind="bells_reg",
+        fallback_render=sched_img.render_bells_regular_image,
+        back_to="info_bells",
+    )
 
 
 async def show_bells_preholiday(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    await query.edit_message_text(BELLS_PRE_HOLIDAY_TEXT, reply_markup=kb.back_button("info_bells"))
+    await _send_image(
+        update, context,
+        kind="bells_pre",
+        fallback_render=sched_img.render_bells_preholiday_image,
+        back_to="info_bells",
+    )
 
 
 async def show_sched_img_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -311,7 +303,10 @@ async def send_schedule_image(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     cached = await asyncio.to_thread(db.get_image, kind)
     if not cached:
-        await query.edit_message_text("⏳ Готовлю изображение (первый раз)...")
+        try:
+            await query.edit_message_text("⏳ Готовлю изображение (первый раз)...")
+        except Exception:
+            pass
         try:
             if kind == "num":
                 data = await asyncio.to_thread(sched_img.render_schedule_image, "Числитель")
@@ -322,10 +317,13 @@ async def send_schedule_image(update: Update, context: ContextTypes.DEFAULT_TYPE
             await asyncio.to_thread(db.save_image, kind, data)
         except Exception:
             logger.exception("Не удалось сгенерировать изображение")
-            await query.edit_message_text(
-                "❌ Не удалось сформировать изображение. Попробуйте позже.",
-                reply_markup=kb.back_button("info_sched_img"),
-            )
+            try:
+                await query.edit_message_text(
+                    "❌ Не удалось сформировать изображение. Попробуйте позже.",
+                    reply_markup=kb.back_button("info_sched_img"),
+                )
+            except Exception:
+                pass
             return
     else:
         data = cached

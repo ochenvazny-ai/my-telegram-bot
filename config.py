@@ -8,8 +8,8 @@ DATABASE_URL = os.environ["DATABASE_URL"]
 INITIAL_ADMIN_ID = int(os.environ["INITIAL_ADMIN_ID"])
 PORT = int(os.environ.get("PORT", "8000"))
 
-# Дефолт для названия группы. Реальное значение читается из БД (db.get_group_name).
 GROUP_NAME = os.environ.get("GROUP_NAME", "ИБ1-31")
+BOT_DISPLAY_NAME = os.environ.get("BOT_DISPLAY_NAME", "ИБ1-31 — Бот")
 
 WEEKDAYS_RU = ["понедельник", "вторник", "среда", "четверг", "пятница", "суббота", "воскресенье"]
 MONTHS_RU = {
