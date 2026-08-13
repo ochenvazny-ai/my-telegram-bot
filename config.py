@@ -1,1 +1,39 @@
-import osfrom dotenv import load_dotenvload_dotenv()BOT_TOKEN = os.environ["BOT_TOKEN"]DATABASE_URL = os.environ["DATABASE_URL"]INITIAL_ADMIN_ID = int(os.environ["INITIAL_ADMIN_ID"])PORT = int(os.environ.get("PORT", "8000"))# ƒÂÙÓÎÚ ‰Îˇ Ì‡Á‚‡ÌËˇ „ÛÔÔ˚. –Â‡Î¸ÌÓÂ ÁÌ‡˜ÂÌËÂ ˜ËÚ‡ÂÚÒˇ ËÁ ¡ƒ (db.get_group_name).GROUP_NAME = os.environ.get("GROUP_NAME", "»¡1-31")WEEKDAYS_RU = ["ÔÓÌÂ‰ÂÎ¸ÌËÍ", "‚ÚÓÌËÍ", "ÒÂ‰‡", "˜ÂÚ‚Â„", "ÔˇÚÌËˆ‡", "ÒÛ··ÓÚ‡", "‚ÓÒÍÂÒÂÌ¸Â"]MONTHS_RU = {    1: "ˇÌ‚‡ˇ", 2: "ÙÂ‚‡Îˇ", 3: "Ï‡Ú‡", 4: "‡ÔÂÎˇ", 5: "Ï‡ˇ", 6: "Ë˛Ìˇ",    7: "Ë˛Îˇ", 8: "‡‚„ÛÒÚ‡", 9: "ÒÂÌÚˇ·ˇ", 10: "ÓÍÚˇ·ˇ", 11: "ÌÓˇ·ˇ", 12: "‰ÂÍ‡·ˇ",}MONTHS_RU_TO_NUM = {v: k for k, v in MONTHS_RU.items()}NUMBER_EMOJIS = ["0??", "1??", "2??", "3??", "4??", "5??", "6??", "7??", "8??", "9??"]def get_site_url(shift: str) -> str:    if shift == "2":        return "https://menu.sttec.yar.ru/timetable/rasp_second.html"    return "https://menu.sttec.yar.ru/timetable/rasp_first.html"# —ÓÒÚÓˇÌËˇ ‰Ë‡ÎÓ„Ó‚HW_TEXT, HW_DUE = range(2)ANN_TEXT, ANN_CONFIRM = range(2, 4)REPLNOTE_TEXT, REPLNOTE_CONFIRM = range(4, 6)PH_DATE = 6SCHED_UPLOAD_TEXT, SCHED_FIELD_VALUE = range(7, 9)ADMIN_ID, ADMIN_NAME = range(9, 11)EXTRA_NAME, EXTRA_CONTENT = range(20, 22)SET_GROUP, SET_BOT_NAME, SET_BOT_PHOTO = range(30, 33)
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
+
+BOT_TOKEN = os.environ["BOT_TOKEN"]
+DATABASE_URL = os.environ["DATABASE_URL"]
+INITIAL_ADMIN_ID = int(os.environ["INITIAL_ADMIN_ID"])
+PORT = int(os.environ.get("PORT", "8000"))
+
+# –î–µ—Ñ–æ–ª—Ç –¥–ª—è –Ω–∞–∑–≤–∞–Ω–∏—è –≥—Ä—É–ø–ø—ã. –†–µ–∞–ª—å–Ω–æ–µ –∑–Ω–∞—á–µ–Ω–∏–µ —á–∏—Ç–∞–µ—Ç—Å—è –∏–∑ –ë–î (db.get_group_name).
+GROUP_NAME = os.environ.get("GROUP_NAME", "–ò–ë1-31")
+
+WEEKDAYS_RU = ["–ø–æ–Ω–µ–¥–µ–ª—å–Ω–∏–∫", "–≤—Ç–æ—Ä–Ω–∏–∫", "—Å—Ä–µ–¥–∞", "—á–µ—Ç–≤–µ—Ä–≥", "–ø—è—Ç–Ω–∏—Ü–∞", "—Å—É–±–±–æ—Ç–∞", "–≤–æ—Å–∫—Ä–µ—Å–µ–Ω—å–µ"]
+MONTHS_RU = {
+    1: "—è–Ω–≤–∞—Ä—è", 2: "—Ñ–µ–≤—Ä–∞–ª—è", 3: "–º–∞—Ä—Ç–∞", 4: "–∞–ø—Ä–µ–ª—è", 5: "–º–∞—è", 6: "–∏—é–Ω—è",
+    7: "–∏—é–ª—è", 8: "–∞–≤–≥—É—Å—Ç–∞", 9: "—Å–µ–Ω—Ç—è–±—Ä—è", 10: "–æ–∫—Ç—è–±—Ä—è", 11: "–Ω–æ—è–±—Ä—è", 12: "–¥–µ–∫–∞–±—Ä—è",
+}
+MONTHS_RU_TO_NUM = {v: k for k, v in MONTHS_RU.items()}
+
+NUMBER_EMOJIS = ["0Ô∏è‚É£", "1Ô∏è‚É£", "2Ô∏è‚É£", "3Ô∏è‚É£", "4Ô∏è‚É£", "5Ô∏è‚É£", "6Ô∏è‚É£", "7Ô∏è‚É£", "8Ô∏è‚É£", "9Ô∏è‚É£"]
+
+
+def get_site_url(shift: str) -> str:
+    if shift == "2":
+        return "https://menu.sttec.yar.ru/timetable/rasp_second.html"
+    return "https://menu.sttec.yar.ru/timetable/rasp_first.html"
+
+
+# –°–æ—Å—Ç–æ—è–Ω–∏—è –¥–∏–∞–ª–æ–≥–æ–≤
+HW_TEXT, HW_DUE = range(2)
+ANN_TEXT, ANN_CONFIRM = range(2, 4)
+REPLNOTE_TEXT, REPLNOTE_CONFIRM = range(4, 6)
+PH_DATE = 6
+SCHED_UPLOAD_TEXT, SCHED_FIELD_VALUE = range(7, 9)
+ADMIN_ID, ADMIN_NAME = range(9, 11)
+
+EXTRA_NAME, EXTRA_CONTENT = range(20, 22)
+SET_GROUP, SET_BOT_NAME, SET_BOT_PHOTO = range(30, 33)
