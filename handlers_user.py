@@ -91,10 +91,25 @@ async def handle_menu_reply_button(update: Update, context: ContextTypes.DEFAULT
 async def main_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    user_id = update.effective_user.id
-    admin = await asyncio.to_thread(db.is_admin, user_id)
-    text = await _greeting_text()
-    await query.edit_message_text(text, reply_markup=kb.main_menu_kb(admin))
+    # Главное меню может быть вызвано с сообщения-фото (после расписания/доп. занятий) — обработать оба случая
+    if query.message and query.message.photo:
+        try:
+            await query.message.delete()
+        except Exception:
+            logger.exception("Не удалось удалить сообщение с изображением")
+        user_id = update.effective_user.id
+        admin = await asyncio.to_thread(db.is_admin, user_id)
+        text = await _greeting_text()
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text=text,
+            reply_markup=kb.main_menu_kb(admin),
+        )
+    else:
+        user_id = update.effective_user.id
+        admin = await asyncio.to_thread(db.is_admin, user_id)
+        text = await _greeting_text()
+        await query.edit_message_text(text, reply_markup=kb.main_menu_kb(admin))
 
 
 async def show_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -143,6 +158,26 @@ async def show_extra_classes(update: Update, context: ContextTypes.DEFAULT_TYPE)
     query = update.callback_query
     await query.answer()
     items = await asyncio.to_thread(db.get_active_extra_classes)
+    # Если сообщение с фото (после открытия конкретного занятия) — удаляем его и шлём новое текстовое
+    if query.message and query.message.photo:
+        try:
+            await query.message.delete()
+        except Exception:
+            logger.exception("Не удалось удалить сообщение с фото")
+        if not items:
+            await context.bot.send_message(
+                chat_id=update.effective_chat.id,
+                text="📭 Нет активных дополнительных занятий.",
+                reply_markup=kb.back_button(),
+            )
+            return
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text="📚 Дополнительные занятия. Выберите:",
+            reply_markup=kb.extra_classes_list_kb(items),
+        )
+        return
+    # Обычное текстовое сообщение
     if not items:
         await query.edit_message_text(
             "📭 Нет активных дополнительных занятий.",
@@ -202,6 +237,18 @@ async def extra_class_open(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def show_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
+    # Если пришли с фото (после расписания) — удаляем и шлём текстовое
+    if query.message and query.message.photo:
+        try:
+            await query.message.delete()
+        except Exception:
+            logger.exception("Не удалось удалить сообщение с фото")
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text="ℹ️ Учебная инфа. Выберите раздел:",
+            reply_markup=kb.info_menu_kb(),
+        )
+        return
     await query.edit_message_text("ℹ️ Учебная инфа. Выберите раздел:", reply_markup=kb.info_menu_kb())
 
 

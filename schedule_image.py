@@ -24,7 +24,7 @@ IMG_W = TABLE_W + MARGIN * 2
 
 # ---------- Палитра ----------
 # Vanilla Custard #FFF9EB — основной фон
-# Misty Sage      #9FB2AC — знаменатель (мягкий серо-зелёный)
+# Terracotta      #E07856 — знаменатель (мягкий тёплый оранжевый)
 # Bloodstone      #5D0D18 — числитель + совпадение в сравнении (тёмно-бордовый)
 
 COLOR_BG = (255, 249, 235)            # Vanilla Custard
@@ -39,7 +39,7 @@ COLOR_TEXT = (40, 32, 28)             # основной текст — почт
 COLOR_TITLE = (93, 13, 24)            # Bloodstone — заголовок расписания
 
 COLOR_NUM = (93, 13, 24)              # Bloodstone — числитель
-COLOR_DEN = (159, 178, 172)           # Misty Sage — знаменатель
+COLOR_DEN = (224, 120, 86)            # Terracotta — знаменатель
 COLOR_MATCH = (93, 13, 24)            # Bloodstone — совпадение в сравнении
 
 
@@ -204,13 +204,10 @@ def render_schedule_image(week_type: str) -> bytes:
         for idx, (pair_num, lines_s, lines_t, lines_r, row_h) in enumerate(rows):
             bg = COLOR_ROW_EVEN if idx % 2 == 0 else COLOR_ROW_ODD
             draw.rectangle([x0, y, x0 + TABLE_W, y + row_h], fill=bg, outline=COLOR_GRID)
-            # ТОЛЬКО номер пары — в цвете недели, жирный
             draw.text((col_x["num"] + 10, y + (row_h - LINE_H) // 2), str(pair_num),
                        fill=accent, font=FONT_CELL_BOLD)
-            # ТОЛЬКО предмет — в цвете недели
             _draw_lines_centered(draw, lines_s, FONT_CELL_BOLD, col_x["subject"] + 6, y, row_h,
                                   COL_W["subject"] - 10, accent)
-            # Преподаватель и аудитория — обычным почти-чёрным
             _draw_lines_centered(draw, lines_t, FONT_CELL, col_x["teacher"] + 6, y, row_h,
                                   COL_W["teacher"] - 10, COLOR_TEXT)
             _draw_lines_centered(draw, lines_r, FONT_CELL, col_x["room"] + 6, y, row_h,
@@ -288,7 +285,7 @@ def render_comparison_image() -> bytes:
     draw = ImageDraw.Draw(img)
 
     title = "Расписание — Сравнение"
-    subtitle = "Совпадения — Bloodstone, различия: числитель — Bloodstone, знаменатель — Misty Sage"
+    subtitle = "Совпадения — Bloodstone, различия: числитель — Bloodstone, знаменатель — Terracotta"
     tw = draw.textlength(title, font=FONT_TITLE)
     draw.text(((IMG_W - tw) // 2, MARGIN), title, fill=COLOR_TITLE, font=FONT_TITLE)
     sw = draw.textlength(subtitle, font=FONT_CELL)
@@ -307,20 +304,17 @@ def render_comparison_image() -> bytes:
         cx = col_x[col_key] + 6
         cw = COL_W[col_key] - 10
         if eq:
-            # Совпало — Bloodstone, жирным
             _draw_lines_centered(draw, lines_num, FONT_CELL_BOLD, cx, row_top, row_h, cw, COLOR_MATCH)
             return
         block_h = len(lines_num) * LINE_H + SPLIT_GAP + len(lines_den) * LINE_H
         y_start = row_top + max(0, (row_h - block_h) // 2)
         yy = y_start
-        # Числитель — Bloodstone
         for line in lines_num:
             draw.text((cx, yy), line, fill=COLOR_NUM, font=FONT_CELL_BOLD)
             yy += LINE_H
         yy += SPLIT_GAP
         den_top = yy
         den_h = len(lines_den) * LINE_H
-        # Знаменатель — Misty Sage, в рамке цвета Misty Sage
         draw.rectangle(
             [col_x[col_key] + 2, den_top - 2, col_x[col_key] + COL_W[col_key] - 2, den_top + den_h + 2],
             outline=COLOR_DEN, width=1,
