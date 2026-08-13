@@ -8,6 +8,7 @@ def main_menu_kb(is_admin_user: bool):
         [InlineKeyboardButton("📚 Домашка", callback_data="menu_hw")],
         [InlineKeyboardButton("📢 Объявления", callback_data="menu_ann")],
         [InlineKeyboardButton("📚 Доп. занятия", callback_data="menu_extra")],
+        [InlineKeyboardButton("👤 Кабинет", callback_data="cabinet")],
         [InlineKeyboardButton("ℹ️ Учебная инфа", callback_data="menu_info")],
     ]
     if is_admin_user:
@@ -34,6 +35,56 @@ def confirm_kb(action: str, item_id):
     ])
 
 
+def skip_name_kb():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("⏭ Оставить как в Telegram", callback_data="start_skip_name")]
+    ])
+
+
+# ===== ОНБОРДИНГ/КАБИНЕТ =====
+def cabinet_menu_kb():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("📝 Изменить имя", callback_data="cabinet_name")],
+        [InlineKeyboardButton("💸 Мои долги", callback_data="cabinet_open_debts")],
+        [InlineKeyboardButton("📝 Мои заметки", callback_data="cabinet_open_notes")],
+        [InlineKeyboardButton("🔔 Уведомления: Замены", callback_data="toggle_replacements")],
+        [InlineKeyboardButton("🔔 Уведомления: Объявления", callback_data="toggle_announcements")],
+        [InlineKeyboardButton("🔔 Уведомления: Домашка", callback_data="toggle_homework")],
+        [InlineKeyboardButton("🔔 Уведомления: Доп. занятия", callback_data="toggle_extra_classes")],
+        [InlineKeyboardButton("🔙 Назад", callback_data="main_menu")],
+    ])
+
+
+def cabinet_notes_kb(kind: str):
+    """Список долгов или заметок."""
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("➕ Добавить", callback_data=f"addnote_{kind}")],
+        [InlineKeyboardButton("🔙 Назад", callback_data="cabinet")],
+    ])
+
+
+def cabinet_notes_with_items_kb(kind: str, notes):
+    """Список с предметами для клика."""
+    buttons = []
+    buttons.append([InlineKeyboardButton("➕ Добавить", callback_data=f"addnote_{kind}")])
+    for note_id, title, _, is_done, _ in notes:
+        mark = "✅" if is_done else "❗"
+        short = (title[:25] + "...") if len(title) > 25 else title
+        buttons.append([InlineKeyboardButton(f"{mark} {short}", callback_data=f"viewnote_{note_id}")])
+    buttons.append([InlineKeyboardButton("🔙 Назад", callback_data="cabinet")])
+    return InlineKeyboardMarkup(buttons)
+
+
+def cabinet_note_actions_kb(note_id: int, is_done: bool, back_to: str):
+    done_label = "↩️ Вернуть в активные" if is_done else "✅ Выполнено"
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton(done_label, callback_data=f"donenote_{note_id}")],
+        [InlineKeyboardButton("🗑 Удалить", callback_data=f"delnote_{note_id}")],
+        [InlineKeyboardButton("🔙 Назад", callback_data=back_to)],
+    ])
+
+
+# ===== ИНФО =====
 def info_menu_kb():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("📞 Расписание звонков", callback_data="info_bells")],
@@ -59,6 +110,7 @@ def schedule_img_choice_kb():
     ])
 
 
+# ===== ДОП. ЗАНЯТИЯ =====
 def extra_classes_list_kb(items):
     buttons = []
     for idx, item in enumerate(items, start=1):
@@ -84,6 +136,7 @@ def ann_skip_photo_kb():
     ])
 
 
+# ===== АДМИНКА =====
 def admin_panel_kb():
     kb = [
         [InlineKeyboardButton("📚 Домашнее задание", callback_data="a_hw_menu")],
@@ -91,9 +144,45 @@ def admin_panel_kb():
         [InlineKeyboardButton("📚 Доп. занятия", callback_data="a_extra_menu")],
         [InlineKeyboardButton("⚙️ Настройки бота", callback_data="a_bot_settings")],
         [InlineKeyboardButton("👥 Админы", callback_data="a_admins_menu")],
+        [InlineKeyboardButton("👥 Пользователи", callback_data="users_menu")],
         [InlineKeyboardButton("🔙 Главное меню", callback_data="main_menu")],
     ]
     return InlineKeyboardMarkup(kb)
+
+
+def users_menu_kb():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("👥 Все пользователи", callback_data="users_view")],
+        [InlineKeyboardButton("🔙 Назад", callback_data="admin_panel")],
+    ])
+
+
+def users_paginated_kb(users, page: int):
+    buttons = []
+    # Кнопки пользователей    for u in users[page*30:(page+1)*30]:
+        uid = u[0]
+        name = u[3] or u[2] or u[1] or "Без имени"
+        short = name[:25] + "..." if len(name) > 25 else name
+        buttons.append([InlineKeyboardButton(f"{short}", callback_data=f"useraction_{uid}")])
+    # Пагинация
+    nav = []
+    if page >0:
+        nav.append(InlineKeyboardButton("◀️", callback_data=f"userspage_{page -1}"))
+    if (page + 1) * 30 < len(users):
+        nav.append(InlineKeyboardButton("▶️", callback_data=f"userspage_{page + 1}"))
+    if nav:
+        buttons.append(nav)
+    buttons.append([InlineKeyboardButton("🔙 Назад", callback_data="users_menu")])
+    return InlineKeyboardMarkup(buttons)
+
+
+def user_action_kb(user_id: int, is_admin_user: bool):
+    admin_label = "❌ Снять с админа" if is_admin_user else "✅ Сделать админом"
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton(admin_label, callback_data=f"toggleadmin_{user_id}")],
+        [InlineKeyboardButton("🗑 Удалить юзера", callback_data=f"deleteuser_{user_id}")],
+        [InlineKeyboardButton("🔙 К списку", callback_data="users_view")],
+    ])
 
 
 def shift_choice_kb():
@@ -108,6 +197,7 @@ def hw_menu_kb():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("➕ Добавить ДЗ", callback_data="a_add_hw")],
         [InlineKeyboardButton("❌ Удалить ДЗ", callback_data="a_del_hw")],
+        [InlineKeyboardButton("📣 Разослать ДЗ подписанным", callback_data="broadcast_hw")],
         [InlineKeyboardButton("🔙 Назад", callback_data="admin_panel")],
     ])
 
@@ -125,30 +215,31 @@ def admins_menu_kb():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("➕ Добавить админа", callback_data="a_add_admin")],
         [InlineKeyboardButton("➖ Удалить админа", callback_data="a_del_admin")],
-        [InlineKeyboardButton("👀 Посмотреть Админов", callback_data="a_view_admins")],
+        [InlineKeyboardButton("👀 Посмотреть", callback_data="a_view_admins")],
         [InlineKeyboardButton("🔙 Назад", callback_data="admin_panel")],
     ])
 
 
 def announcement_confirm_kb():
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("✅ Да, отправить", callback_data="ann_send_yes")],
-        [InlineKeyboardButton("❌ Нет, только сохранить", callback_data="ann_send_no")],
+        [InlineKeyboardButton("✅ Да, разослать", callback_data="ann_send_yes")],
+        [InlineKeyboardButton("❌ Нет, сохранить", callback_data="ann_send_no")],
     ])
 
 
 def replnote_confirm_kb():
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("✅ Да, сохранить", callback_data="replnote_save_yes")],
-        [InlineKeyboardButton("❌ Нет, отмена", callback_data="replnote_save_no")],
+        [InlineKeyboardButton("✅ Да", callback_data="replnote_save_yes")],
+        [InlineKeyboardButton("❌ Нет", callback_data="replnote_save_no")],
     ])
 
 
 def extra_admin_menu_kb():
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("➕ Добавить занятие", callback_data="a_add_extra")],
-        [InlineKeyboardButton("❌ Удалить занятие", callback_data="a_del_extra")],
-        [InlineKeyboardButton("👀 Посмотреть занятия", callback_data="a_view_extra")],
+        [InlineKeyboardButton("➕ Добавить", callback_data="a_add_extra")],
+        [InlineKeyboardButton("❌ Удалить", callback_data="a_del_extra")],
+        [InlineKeyboardButton("👀 Посмотреть", callback_data="a_view_extra")],
+        [InlineKeyboardButton("📣 Разослать подписанным", callback_data="broadcast_extra")],
         [InlineKeyboardButton("🔙 Назад", callback_data="admin_panel")],
     ])
 
@@ -181,7 +272,7 @@ def delete_hw_kb(tasks):
     for idx, (db_id, task, due_date, _) in enumerate(tasks, start=1):
         short = task[:30] + "..." if len(task) > 30 else task
         buttons.append([InlineKeyboardButton(f"{idx}. {short}", callback_data=f"delhw_{db_id}")])
-    buttons.append([InlineKeyboardButton("🔙 Назад", callback_data="admin_panel")])
+    buttons.append([InlineKeyboardButton("🔙 Назад", callback_data="a_hw_menu")])
     return InlineKeyboardMarkup(buttons)
 
 
@@ -197,7 +288,7 @@ def delete_ann_kb(anns):
         text = item[1] or "(без текста)"
         short = text[:28] + "..." if len(text) > 28 else text
         buttons.append([InlineKeyboardButton(f"{idx}. {prefix}{short}", callback_data=f"delann_{ann_id}")])
-    buttons.append([InlineKeyboardButton("🔙 Назад", callback_data="admin_panel")])
+    buttons.append([InlineKeyboardButton("🔙 Назад", callback_data="a_ann_menu")])
     return InlineKeyboardMarkup(buttons)
 
 
@@ -209,7 +300,7 @@ def delete_admin_kb(admins, current_user_id, initial_admin_id):
         buttons.append([InlineKeyboardButton(f"{name} (ID {user_id})", callback_data=f"deladmin_{user_id}")])
     if not buttons:
         return None
-    buttons.append([InlineKeyboardButton("🔙 Назад", callback_data="admin_panel")])
+    buttons.append([InlineKeyboardButton("🔙 Назад", callback_data="a_admins_menu")])
     return InlineKeyboardMarkup(buttons)
 
 

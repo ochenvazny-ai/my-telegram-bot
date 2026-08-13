@@ -19,13 +19,9 @@ from config import (
     ADMIN_ID, ADMIN_NAME, EXTRA_NAME, EXTRA_CONTENT, SET_GROUP, SET_BOT_NAME, SET_BOT_PHOTO,
 )
 
-logging.basicConfig(
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-    level=logging.INFO,
-)
+logging.basicConfig(format="%(asctime)s [%(levelname)s] %(name)s: %(message)s", level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Глобальная ссылка на bot для рассылки из schedule_service.py
 _broadcast_bot = None
 
 
@@ -38,15 +34,13 @@ class HealthHandler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.end_headers()
         self.wfile.write(b"OK")
-
-    def log_message(self, format, *args):
+    def log_message(self, fmt, *args):
         pass
 
 
 def run_health_server():
     port = int(os.environ.get("PORT", 8000))
-    server = HTTPServer(("0.0.0.0", port), HealthHandler)
-    server.serve_forever()
+    HTTPServer(("0.0.0.0", port), HealthHandler).serve_forever()
 
 
 threading.Thread(target=run_health_server, daemon=True).start()
@@ -57,6 +51,44 @@ def build_conversations():
         CallbackQueryHandler(ha.cancel_conversation, pattern="^cancel_action$"),
         CallbackQueryHandler(ha.back_to_admin_panel, pattern="^admin_panel$"),
     ]
+
+    conv_set_name = ConversationHandler(
+        entry_points=[
+ CallbackQueryHandler(hu.cabinet_change_name, pattern="^cabinet_name$")
+        ],
+        states={
+            0: [MessageHandler(filters.TEXT & ~filters.COMMAND, hu.cabinet_save_name)],
+        },
+        fallbacks=[
+            CallbackQueryHandler(hu.show_cabinet, pattern="^cabinet$"),
+            CallbackQueryHandler(ha.cancel_conversation, pattern="^cancel_action$"),
+        ],
+ map_to_parent={},
+    )
+
+    conv_add_note_debt = ConversationHandler(
+        entry_points=[CallbackQueryHandler(hu.cabinet_add_note_start, pattern="^addnote_debt$")],
+        states={
+            0: [MessageHandler(filters.TEXT & ~filters.COMMAND, hu.cabinet_add_note_title)],
+            1: [MessageHandler(filters.TEXT & ~filters.COMMAND, hu.cabinet_add_note_content)],
+        },
+        fallbacks=[
+            CallbackQueryHandler(hu.cabinet_open_debts, pattern="^cabinet_open_debts$"),
+            CallbackQueryHandler(ha.cancel_conversation, pattern="^cancel_action$"),
+        ],
+    )
+
+    conv_add_note_note = ConversationHandler(
+        entry_points=[CallbackQueryHandler(hu.cabinet_add_note_start, pattern="^addnote_note$")],
+        states={
+            0: [MessageHandler(filters.TEXT & ~filters.COMMAND, hu.cabinet_add_note_title)],
+            1: [MessageHandler(filters.TEXT & ~filters.COMMAND, hu.cabinet_add_note_content)],
+        },
+        fallbacks=[
+            CallbackQueryHandler(hu.cabinet_open_notes, pattern="^cabinet_open_notes$"),
+            CallbackQueryHandler(ha.cancel_conversation, pattern="^cancel_action$"),
+        ],
+    )
 
     conv_add_hw = ConversationHandler(
         entry_points=[CallbackQueryHandler(ha.add_hw_start, pattern="^a_add_hw$")],
@@ -146,6 +178,7 @@ def build_conversations():
     )
 
     return [
+        conv_set_name, conv_add_note_debt, conv_add_note_note,
         conv_add_hw, conv_add_ann, conv_add_replnote, conv_add_admin,
         conv_sched_upload, conv_sched_field,
         conv_extra_add, conv_set_group, conv_set_bot_name, conv_set_bot_photo,
@@ -162,7 +195,7 @@ def main():
     db.init_default_schedule()
 
     application = Application.builder().token(BOT_TOKEN).build()
-    _broadcast_bot = application.bot  # для рассылки из schedule_service
+    _broadcast_bot = application.bot
     application.add_error_handler(error_handler)
 
     application.add_handler(CommandHandler("start", hu.start))
@@ -171,7 +204,13 @@ def main():
     for conv in build_conversations():
         application.add_handler(conv)
 
-    # Пользовательская часть
+    # Хендлер для онбординга: первое сообщение после /start (ввод имени)
+    application.add_handler(MessageHandler(
+        filters.TEXT & ~filters.COMMAND & ~filters.Regex("^📋 Меню$"),
+        hu.start_set_name
+    ), group=1)
+
+    # ===== Пользовательская часть =====
     application.add_handler(CallbackQueryHandler(hu.main_menu_callback, pattern="^main_menu$"))
     application.add_handler(CallbackQueryHandler(hu.show_schedule, pattern="^menu_zam$"))
     application.add_handler(CallbackQueryHandler(hu.show_hw, pattern="^menu_hw$"))
@@ -180,6 +219,17 @@ def main():
     application.add_handler(CallbackQueryHandler(hu.extra_class_open, pattern="^open_extra_\\d+$"))
     application.add_handler(CallbackQueryHandler(hu.show_info, pattern="^menu_info$"))
 
+    # Личный кабинет
+    application.add_handler(CallbackQueryHandler(hu.show_cabinet, pattern="^cabinet$"))
+    application.add_handler(CallbackQueryHandler(hu.cabinet_open_debts, pattern="^cabinet_open_debts$"))
+    application.add_handler(CallbackQueryHandler(hu.cabinet_open_notes, pattern="^cabinet_open_notes$"))
+    application.add_handler(CallbackQueryHandler(hu.cabinet_view_note, pattern="^viewnote_\\d+$"))
+    application.add_handler(CallbackQueryHandler(hu.cabinet_toggle_note_done, pattern="^donenote_\\d+$"))
+    application.add_handler(CallbackQueryHandler(hu.cabinet_delete_note, pattern="^delnote_\\d+$"))
+    application.add_handler(CallbackQueryHandler(hu.cabinet_toggle_notify, pattern="^toggle_(replacements|announcements|homework|extra_classes)$"))
+    application.add_handler(CallbackQueryHandler(hu.start_skip_name, pattern="^start_skip_name$"))
+
+    # Звонки / расписание
     application.add_handler(CallbackQueryHandler(hu.show_bells_menu, pattern="^info_bells$"))
     application.add_handler(CallbackQueryHandler(hu.show_bells_regular, pattern="^bells_regular$"))
     application.add_handler(CallbackQueryHandler(hu.show_bells_preholiday, pattern="^bells_preholiday$"))
@@ -190,14 +240,16 @@ def main():
         filters.Regex("^📋 Меню$") & ~filters.COMMAND, hu.handle_menu_reply_button
     ))
 
-    # Админка
+    # ===== Админка =====
     application.add_handler(CallbackQueryHandler(ha.admin_panel_entry, pattern="^admin_panel$"))
     application.add_handler(CallbackQueryHandler(ha.shift_menu, pattern="^a_shift$"))
     application.add_handler(CallbackQueryHandler(ha.shift_set, pattern="^shiftset_(1|2)$"))
     application.add_handler(CallbackQueryHandler(ha.hw_menu, pattern="^a_hw_menu$"))
+    application.add_handler(CallbackQueryHandler(ha.broadcast_hw_to_subscribers, pattern="^broadcast_hw$"))
     application.add_handler(CallbackQueryHandler(ha.ann_menu, pattern="^a_ann_menu$"))
     application.add_handler(CallbackQueryHandler(ha.admins_menu, pattern="^a_admins_menu$"))
     application.add_handler(CallbackQueryHandler(ha.extra_menu, pattern="^a_extra_menu$"))
+    application.add_handler(CallbackQueryHandler(ha.broadcast_extra_class, pattern="^broadcast_extra$"))
     application.add_handler(CallbackQueryHandler(ha.bot_settings_menu, pattern="^a_bot_settings$"))
 
     application.add_handler(CallbackQueryHandler(ha.del_hw_list, pattern="^a_del_hw$"))
@@ -218,6 +270,14 @@ def main():
     application.add_handler(CallbackQueryHandler(ha.extra_del_confirm, pattern="^confirm_delextra_\\d+$"))
     application.add_handler(CallbackQueryHandler(ha.extra_view, pattern="^a_view_extra$"))
 
+    # Управление пользователями
+    application.add_handler(CallbackQueryHandler(ha.users_menu, pattern="^users_menu$"))
+    application.add_handler(CallbackQueryHandler(ha.view_users_list, pattern="^users_view$"))
+    application.add_handler(CallbackQueryHandler(ha.users_paginated, pattern="^userspage_\\d+$"))
+    application.add_handler(CallbackQueryHandler(ha.user_action_menu, pattern="^useraction_\\d+$"))
+    application.add_handler(CallbackQueryHandler(ha.user_toggle_admin, pattern="^toggleadmin_\\d+$"))
+    application.add_handler(CallbackQueryHandler(ha.user_delete, pattern="^deleteuser_\\d+$"))
+
     application.add_handler(CallbackQueryHandler(ha.edit_schedule_menu, pattern="^a_sched_menu$"))
     application.add_handler(CallbackQueryHandler(ha.force_broadcast_replacements_btn, pattern="^force_repl_broadcast$"))
     application.add_handler(CallbackQueryHandler(ha.del_all_day_menu, pattern="^a_del_all_day$"))
@@ -236,7 +296,7 @@ def main():
     application.add_handler(CallbackQueryHandler(ha.back_to_admin_panel, pattern="^cancel_delextra$"))
     application.add_handler(CallbackQueryHandler(ha.back_to_admin_panel, pattern="^cancel_schedupload$"))
 
-    logger.info("Бот запущен. Health-сервер на порту %s", os.environ.get("PORT", 8000))
+    logger.info("Бот запущен.")
     application.run_polling(drop_pending_updates=True)
 
 
