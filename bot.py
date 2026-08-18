@@ -59,6 +59,7 @@ def build_conversations():
             HW_DUE: [MessageHandler(filters.TEXT & ~filters.COMMAND, ha.add_hw_due)],
         },
         fallbacks=fallback,
+        per_message=False,
     )
 
     conv_add_ann = ConversationHandler(
@@ -73,6 +74,7 @@ def build_conversations():
             ANN_CONFIRM: [CallbackQueryHandler(ha.add_ann_confirm, pattern="^ann_send_(yes|no)$")],
         },
         fallbacks=fallback,
+        per_message=False,
     )
 
     conv_add_replnote = ConversationHandler(
@@ -82,6 +84,7 @@ def build_conversations():
             REPLNOTE_CONFIRM: [CallbackQueryHandler(ha.add_replnote_confirm, pattern="^replnote_save_(yes|no)$")],
         },
         fallbacks=fallback,
+        per_message=False,
     )
 
     conv_add_admin = ConversationHandler(
@@ -91,12 +94,14 @@ def build_conversations():
             ADMIN_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, ha.add_admin_name)],
         },
         fallbacks=fallback,
+        per_message=False,
     )
 
     conv_sched_upload = ConversationHandler(
         entry_points=[CallbackQueryHandler(ha.sched_upload_start, pattern="^sched_upload$")],
         states={SCHED_UPLOAD_TEXT: [MessageHandler(filters.Document.ALL, ha.sched_upload_document)]},
         fallbacks=fallback,
+        per_message=False,
     )
 
     conv_sched_field = ConversationHandler(
@@ -106,6 +111,7 @@ def build_conversations():
         ],
         states={SCHED_FIELD_VALUE: [MessageHandler(filters.TEXT & ~filters.COMMAND, ha.sched_field_value)]},
         fallbacks=fallback,
+        per_message=False,
     )
 
     conv_extra_add = ConversationHandler(
@@ -119,24 +125,28 @@ def build_conversations():
             ],
         },
         fallbacks=fallback,
+        per_message=False,
     )
 
     conv_set_group = ConversationHandler(
         entry_points=[CallbackQueryHandler(ha.set_group_start, pattern="^a_set_group$")],
         states={SET_GROUP: [MessageHandler(filters.TEXT & ~filters.COMMAND, ha.set_group_finish)]},
         fallbacks=fallback,
+        per_message=False,
     )
 
     conv_set_bot_name = ConversationHandler(
         entry_points=[CallbackQueryHandler(ha.set_bot_name_start, pattern="^a_set_botname$")],
         states={SET_BOT_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, ha.set_bot_name_finish)]},
         fallbacks=fallback,
+        per_message=False,
     )
 
     conv_set_bot_photo = ConversationHandler(
         entry_points=[CallbackQueryHandler(ha.set_bot_photo_start, pattern="^a_set_botphoto$")],
         states={SET_BOT_PHOTO: [MessageHandler(filters.PHOTO, ha.set_bot_photo_finish)]},
         fallbacks=fallback,
+        per_message=False,
     )
 
     return [
@@ -147,13 +157,7 @@ def build_conversations():
 
 
 def main():
-    global _broadcast_bot
-    try:
-        asyncio.get_event_loop()
-    except RuntimeError:
-        asyncio.set_event_loop(asyncio.new_event_loop())
-
-    db.init_default_schedule()
+    global _broadcast_bot    db.init_default_schedule()
 
     application = Application.builder().token(BOT_TOKEN).build()
     _broadcast_bot = application.bot
