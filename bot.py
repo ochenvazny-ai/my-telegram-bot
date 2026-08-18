@@ -157,7 +157,8 @@ def build_conversations():
 
 
 def main():
-    global _broadcast_bot    db.init_default_schedule()
+    global _broadcast_bot
+    db.init_default_schedule()
 
     application = Application.builder().token(BOT_TOKEN).build()
     _broadcast_bot = application.bot
