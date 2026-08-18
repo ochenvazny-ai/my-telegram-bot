@@ -26,7 +26,7 @@ _broadcast_bot = None
 
 
 async def error_handler(update, context):
-    logger.error("Необработанное исключение:", exc_info=context.error)
+    logger.error("Exception:", exc_info=context.error)
 
 
 class HealthHandler(BaseHTTPRequestHandler):
@@ -51,44 +51,6 @@ def build_conversations():
         CallbackQueryHandler(ha.cancel_conversation, pattern="^cancel_action$"),
         CallbackQueryHandler(ha.back_to_admin_panel, pattern="^admin_panel$"),
     ]
-
-    conv_set_name = ConversationHandler(
-        entry_points=[
- CallbackQueryHandler(hu.cabinet_change_name, pattern="^cabinet_name$")
-        ],
-        states={
-            0: [MessageHandler(filters.TEXT & ~filters.COMMAND, hu.cabinet_save_name)],
-        },
-        fallbacks=[
-            CallbackQueryHandler(hu.show_cabinet, pattern="^cabinet$"),
-            CallbackQueryHandler(ha.cancel_conversation, pattern="^cancel_action$"),
-        ],
- map_to_parent={},
-    )
-
-    conv_add_note_debt = ConversationHandler(
-        entry_points=[CallbackQueryHandler(hu.cabinet_add_note_start, pattern="^addnote_debt$")],
-        states={
-            0: [MessageHandler(filters.TEXT & ~filters.COMMAND, hu.cabinet_add_note_title)],
-            1: [MessageHandler(filters.TEXT & ~filters.COMMAND, hu.cabinet_add_note_content)],
-        },
-        fallbacks=[
-            CallbackQueryHandler(hu.cabinet_open_debts, pattern="^cabinet_open_debts$"),
-            CallbackQueryHandler(ha.cancel_conversation, pattern="^cancel_action$"),
-        ],
-    )
-
-    conv_add_note_note = ConversationHandler(
-        entry_points=[CallbackQueryHandler(hu.cabinet_add_note_start, pattern="^addnote_note$")],
-        states={
-            0: [MessageHandler(filters.TEXT & ~filters.COMMAND, hu.cabinet_add_note_title)],
-            1: [MessageHandler(filters.TEXT & ~filters.COMMAND, hu.cabinet_add_note_content)],
-        },
-        fallbacks=[
-            CallbackQueryHandler(hu.cabinet_open_notes, pattern="^cabinet_open_notes$"),
-            CallbackQueryHandler(ha.cancel_conversation, pattern="^cancel_action$"),
-        ],
-    )
 
     conv_add_hw = ConversationHandler(
         entry_points=[CallbackQueryHandler(ha.add_hw_start, pattern="^a_add_hw$")],
@@ -178,7 +140,6 @@ def build_conversations():
     )
 
     return [
-        conv_set_name, conv_add_note_debt, conv_add_note_note,
         conv_add_hw, conv_add_ann, conv_add_replnote, conv_add_admin,
         conv_sched_upload, conv_sched_field,
         conv_extra_add, conv_set_group, conv_set_bot_name, conv_set_bot_photo,
@@ -204,13 +165,7 @@ def main():
     for conv in build_conversations():
         application.add_handler(conv)
 
-    # Хендлер для онбординга: первое сообщение после /start (ввод имени)
-    application.add_handler(MessageHandler(
-        filters.TEXT & ~filters.COMMAND & ~filters.Regex("^📋 Меню$"),
-        hu.start_set_name
-    ), group=1)
-
-    # ===== Пользовательская часть =====
+    # Пользовательская часть
     application.add_handler(CallbackQueryHandler(hu.main_menu_callback, pattern="^main_menu$"))
     application.add_handler(CallbackQueryHandler(hu.show_schedule, pattern="^menu_zam$"))
     application.add_handler(CallbackQueryHandler(hu.show_hw, pattern="^menu_hw$"))
@@ -221,13 +176,7 @@ def main():
 
     # Личный кабинет
     application.add_handler(CallbackQueryHandler(hu.show_cabinet, pattern="^cabinet$"))
-    application.add_handler(CallbackQueryHandler(hu.cabinet_open_debts, pattern="^cabinet_open_debts$"))
-    application.add_handler(CallbackQueryHandler(hu.cabinet_open_notes, pattern="^cabinet_open_notes$"))
-    application.add_handler(CallbackQueryHandler(hu.cabinet_view_note, pattern="^viewnote_\\d+$"))
-    application.add_handler(CallbackQueryHandler(hu.cabinet_toggle_note_done, pattern="^donenote_\\d+$"))
-    application.add_handler(CallbackQueryHandler(hu.cabinet_delete_note, pattern="^delnote_\\d+$"))
     application.add_handler(CallbackQueryHandler(hu.cabinet_toggle_notify, pattern="^toggle_(replacements|announcements|homework|extra_classes)$"))
-    application.add_handler(CallbackQueryHandler(hu.start_skip_name, pattern="^start_skip_name$"))
 
     # Звонки / расписание
     application.add_handler(CallbackQueryHandler(hu.show_bells_menu, pattern="^info_bells$"))
@@ -240,7 +189,7 @@ def main():
         filters.Regex("^📋 Меню$") & ~filters.COMMAND, hu.handle_menu_reply_button
     ))
 
-    # ===== Админка =====
+    # Админка
     application.add_handler(CallbackQueryHandler(ha.admin_panel_entry, pattern="^admin_panel$"))
     application.add_handler(CallbackQueryHandler(ha.shift_menu, pattern="^a_shift$"))
     application.add_handler(CallbackQueryHandler(ha.shift_set, pattern="^shiftset_(1|2)$"))

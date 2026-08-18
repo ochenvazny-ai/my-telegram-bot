@@ -18,7 +18,7 @@ INFO_TEXT = (
     "📚 Домашка — список актуальных домашних заданий.\n"
     "📢 Объявления — активные объявления от администрации.\n"
     "📚 Доп. занятия — дополнительные занятия с расписанием.\n"
-    "👤 Кабинет — личные заметки и настройки.\n"
+    "👤 Личное — настройки уведомлений.\n"
     "ℹ️ Учебная инфа — расписание звонков и расписание пар.\n\n"
     "Успехов в учёбе! 📚"
 )
@@ -33,55 +33,11 @@ async def start(update, context):
     user = update.effective_user
     await asyncio.to_thread(db.upsert_user, user.id, user.username, user.first_name)
     admin = await asyncio.to_thread(db.is_admin, user.id)
-    settings = await asyncio.to_thread(db.get_user_settings_row, user.id)
-    if not settings.get("display_name"):
-        await update.message.reply_text(
-            f"👋 Привет, {user.first_name or 'друг'}!\n\n"
-            "Как тебя звать в боте? Это имя будет в уведомлениях.\n"
-            "Просто напиши своё имя или ник:",
-            reply_markup=kb.skip_name_kb(),
-        )
-        return
     await update.message.reply_text(
         await _greeting_text(),
         reply_markup=kb.main_menu_kb(admin),
     )
     await update.message.reply_text("Меню:", reply_markup=kb.reply_menu_button())
-
-
-async def start_set_name(update, context):
-    name = update.message.text.strip()[:40]
-    if not name:
-        await update.message.reply_text("Имя пустое. Попробуй ещё раз:")
-        return
-    await asyncio.to_thread(db.set_user_display_name, update.effective_user.id, name)
-    user = update.effective_user
-    admin = await asyncio.to_thread(db.is_admin, user.id)
-    await update.message.reply_text(f"✅ Записал: «{name}».")
-    await update.message.reply_text(
-        await _greeting_text(),
-        reply_markup=kb.main_menu_kb(admin),
-    )
-    await update.message.reply_text("Меню:", reply_markup=kb.reply_menu_button())
-
-
-async def start_skip_name(update, context):
-    query = update.callback_query
-    await query.answer()
-    user = update.effective_user
-    default_name = user.first_name or user.username or "Студент"
-    await asyncio.to_thread(db.set_user_display_name, user.id, default_name)
-    admin = await asyncio.to_thread(db.is_admin, user.id)
-    try:
-        await query.edit_message_text(f"✅ Окей, буду звать тебя «{default_name}».")
-    except Exception:
-        pass
-    await context.bot.send_message(
-        chat_id=update.effective_chat.id,
-        text=await _greeting_text(),
-        reply_markup=kb.main_menu_kb(admin),
-    )
-    await context.bot.send_message(chat_id=update.effective_chat.id, text="Меню:", reply_markup=kb.reply_menu_button())
 
 
 async def my_id(update, context):
@@ -206,7 +162,8 @@ async def extra_class_open(update, context):
     try:
         item_id = int(query.data.split("_")[2])
     except (ValueError, IndexError):
-        return rec = await asyncio.to_thread(db.get_extra_class, item_id)
+        return
+    rec = await asyncio.to_thread(db.get_extra_class, item_id)
     if not rec:
         await query.answer("❌ Занятие не найдено.", show_alert=True)
         return
@@ -390,62 +347,28 @@ async def send_schedule_image(update, context):
         pass
 
 
+# ===== ЛИЧНЫЙ КАБИНЕТ =====
 async def show_cabinet(update, context):
     query = update.callback_query
     await query.answer()
     user_id = update.effective_user.id
     s = await asyncio.to_thread(db.get_user_settings_row, user_id)
-    name = s.get("display_name") or "не задано"
+    name = s.get("first_name") or s.get("username") or "Пользователь"
     repl = "✅" if s.get("notify_replacements") else "❌"
     ann = "✅" if s.get("notify_announcements") else "❌"
     hw = "✅" if s.get("notify_homework") else "❌"
     ec = "✅" if s.get("notify_extra_classes") else "❌"
     text = (
-        f"👤 <b>Личный кабинет</b>\n\n"
-        f"Имя в боте: <b>{name}</b>\n\n"
+        f"👤 <b>Личное</b>\n\n"
+        f"Привет, <b>{name}</b>!\n\n"
         f"🔔 Уведомления:\n"
         f"  • Замены: {repl}\n"
         f"  • Объявления: {ann}\n"
         f"  • Домашка: {hw}\n"
-        f"  • Доп. занятия: {ec}\n"
+        f"  • Доп. занятия: {ec}\n\n"
+        f"Нажми на уведомление, чтобы вкл/откл."
     )
     await query.edit_message_text(text, parse_mode='HTML', reply_markup=kb.cabinet_menu_kb())
-
-
-async def cabinet_change_name(update, context):
-    query = update.callback_query
-    await query.answer()
-    context.user_data['cabinet_state'] = 'awaiting_name'
-    await query.edit_message_text("Введите новое имя для бота:", reply_markup=kb.back_button("cabinet"))
-
-
-async def cabinet_save_name(update, context):
-    if context.user_data.get('cabinet_state') != 'awaiting_name':
-        return
-    name = update.message.text.strip()[:40]
-    if not name:
-        await update.message.reply_text("Имя пустое. Попробуй ещё раз:", reply_markup=kb.back_button("cabinet"))
-        return
-    await asyncio.to_thread(db.set_user_display_name, update.effective_user.id, name)
-    context.user_data.pop('cabinet_state', None)
-    await update.message.reply_text(f"✅ Имя изменено на «{name}».")
-    user_id = update.effective_user.id
-    s = await asyncio.to_thread(db.get_user_settings_row, user_id)
-    name_disp = s.get("display_name") or "не задано"
-    repl = "✅" if s.get("notify_replacements") else "❌"
-    ann = "✅" if s.get("notify_announcements") else "❌"
-    hw = "✅" if s.get("notify_homework") else "❌"
-    ec = "✅" if s.get("notify_extra_classes") else "❌"
-    text = (
-        f"👤 <b>Личный кабинет</b>\n\n"
-        f"Имя в боте: <b>{name_disp}</b>\n\n"
-        f"🔔 Уведомления:\n"
-        f"  • Замены: {repl}\n"
-        f"  • Объявления: {ann}\n"
-        f"  • Домашка: {hw}\n"
-        f"  • Доп. занятия: {ec}\n"
-    )
-    await update.message.reply_text(text, parse_mode='HTML', reply_markup=kb.cabinet_menu_kb())
 
 
 async def cabinet_toggle_notify(update, context):
@@ -464,182 +387,21 @@ async def cabinet_toggle_notify(update, context):
         return
     s = await asyncio.to_thread(db.get_user_settings_row, user_id)
     current = bool(s.get(col))
-    new_val = not current
-    await asyncio.to_thread(db.set_user_notify, user_id, kind, new_val)
+    await asyncio.to_thread(db.set_user_notify, user_id, kind, not current)
     s = await asyncio.to_thread(db.get_user_settings_row, user_id)
-    name_disp = s.get("display_name") or "не задано"
+    name = s.get("first_name") or s.get("username") or "Пользователь"
     repl = "✅" if s.get("notify_replacements") else "❌"
     ann = "✅" if s.get("notify_announcements") else "❌"
     hw = "✅" if s.get("notify_homework") else "❌"
     ec = "✅" if s.get("notify_extra_classes") else "❌"
     text = (
-        f"👤 <b>Личный кабинет</b>\n\n"
-        f"Имя в боте: <b>{name_disp}</b>\n\n"
+        f"👤 <b>Личное</b>\n\n"
+        f"Привет, <b>{name}</b>!\n\n"
         f"🔔 Уведомления:\n"
         f"  • Замены: {repl}\n"
         f"  • Объявления: {ann}\n"
         f"  • Домашка: {hw}\n"
-        f"  • Доп. занятия: {ec}\n"
+        f"  • Доп. занятия: {ec}\n\n"
+        f"Нажми на уведомление, чтобы вкл/откл."
     )
     await query.edit_message_text(text, parse_mode='HTML', reply_markup=kb.cabinet_menu_kb())
-
-
-async def cabinet_open_debts(update, context):
-    query = update.callback_query
-    await query.answer()
-    notes = await asyncio.to_thread(db.get_user_notes, update.effective_user.id, 'debt')
-    if not notes:
-        text = "💸 У тебя нет долгов. Добавь первый:"
-    else:
-        lines = ["💸 <b>Мои долги:</b>\n"]
-        for idx, (note_id, title, content, is_done, _) in enumerate(notes, start=1):
-            mark = "✅" if is_done else "❗"
-            short_title = (title[:30] + "...") if len(title) > 30 else title
-            lines.append(f"{idx}️⃣ {mark} {short_title}")
-        text = "\n".join(lines)
-    await query.edit_message_text(text, parse_mode='HTML', reply_markup=kb.cabinet_notes_with_items_kb('debt', notes))
-
-
-async def cabinet_open_notes(update, context):
-    query = update.callback_query
-    await query.answer()
-    notes = await asyncio.to_thread(db.get_user_notes, update.effective_user.id, 'note')
-    if not notes:
-        text = "📝 У тебя нет заметок. Добавь первую:"
-    else:
-        lines = ["📝 <b>Мои заметки:</b>\n"]
-        for idx, (note_id, title, content, is_done, _) in enumerate(notes, start=1):
-            mark = "✅" if is_done else "❗"
-            short_title = (title[:30] + "...") if len(title) > 30 else title lines.append(f"{idx}️⃣ {mark} {short_title}")
-        text = "\n".join(lines)
-    await query.edit_message_text(text, parse_mode='HTML', reply_markup=kb.cabinet_notes_with_items_kb('note', notes))
-
-
-async def cabinet_add_note_start(update, context):
-    query = update.callback_query
-    await query.answer()
-    kind = query.data.split("_")[1]
-    context.user_data['cabinet_note_state'] = 'awaiting_title'
-    context.user_data['cabinet_note_kind'] = kind
-    label = "долг" if kind == 'debt' else "заметку"
-    back = "cabinet_open_debts" if kind == 'debt' else "cabinet_open_notes"
-    await query.edit_message_text(
-        f"Введите название {label}а:", reply_markup=kb.back_button(back)
-    )
-
-
-async def cabinet_add_note_title(update, context):
-    if context.user_data.get('cabinet_note_state') != 'awaiting_title':
-        return
-    title = update.message.text.strip()[:80]
-    if not title:
-        await update.message.reply_text("Название пустое. Попробуй ещё раз:")
-        return
-    context.user_data['cabinet_note_title'] = title
-    context.user_data['cabinet_note_state'] = 'awaiting_content'
-    kind = context.user_data['cabinet_note_kind']
-    label = "долга" if kind == 'debt' else "заметки"
-    back = "cabinet_open_debts" if kind == 'debt' else "cabinet_open_notes"
-    await update.message.reply_text(
-        f"Теперь введите содержимое {label} (или «-» без описания):",
-        reply_markup=kb.back_button(back)
-    )
-
-
-async def cabinet_add_note_content(update, context):
-    if context.user_data.get('cabinet_note_state') != 'awaiting_content':
-        return
-    content_text = update.message.text.strip()
-    content = None if content_text == '-' else content_text
-    kind = context.user_data.get('cabinet_note_kind')
-    title = context.user_data.get('cabinet_note_title')
-    context.user_data.clear()
-    note_id = await asyncio.to_thread(db.add_user_note, update.effective_user.id, kind, title, content)
-    if not note_id:
-        await update.message.reply_text("❌ Ошибка.")
-        return
-    notes = await asyncio.to_thread(db.get_user_notes, update.effective_user.id, kind)
-    if not notes:
-        text = "Пусто."
-    else:
-        header = "<b>Мои долги:</b>\n" if kind == 'debt' else "<b>Мои заметки:</b>\n"
-        lines = [header]
-        for idx, (n_id, ttl, cont, dn, _) in enumerate(notes, start=1):
-            mark = "✅" if dn else "❗"
-            short_title = (ttl[:30] + "...") if len(ttl) > 30 else ttl
-            lines.append(f"{idx}️⃣ {mark} {short_title}")
-        text = "\n".join(lines)
-    await update.message.reply_text(text, parse_mode='HTML', reply_markup=kb.cabinet_notes_with_items_kb(kind, notes))
-
-
-async def cabinet_view_note(update, context):
-    query = update.callback_query
-    await query.answer()
-    try:
-        note_id = int(query.data.split("_")[1])
-    except (ValueError, IndexError):
-        return
-    rec = await asyncio.to_thread(db.get_user_note, note_id)
-    if not rec or rec[1] != update.effective_user.id:
-        await query.answer("❌ Не найдено.", show_alert=True)
-        return
-    _, _, kind, title, content, is_done = rec
-    text = f"<b>{title}</b>\n\n{content or '(без содержимого)'}"
-    back_to = "cabinet_open_debts" if kind == 'debt' else "cabinet_open_notes"
-    await query.edit_message_text(
-        text, parse_mode='HTML', reply_markup=kb.cabinet_note_actions_kb(note_id, is_done, back_to)
-    )
-
-
-async def cabinet_toggle_note_done(update, context):
-    query = update.callback_query
-    await query.answer()
-    try:
-        note_id = int(query.data.split("_")[1])
-    except (ValueError, IndexError):
-        return
-    rec = await asyncio.to_thread(db.get_user_note, note_id)
-    if not rec or rec[1] != update.effective_user.id:
-        await query.answer("❌ Не найдено.", show_alert=True)
-        return
-    _, _, kind, _, _, is_done = rec
-    await asyncio.to_thread(db.set_user_note_done, note_id, not is_done)
-    notes = await asyncio.to_thread(db.get_user_notes, update.effective_user.id, kind)
-    if not notes:
-        text = "Пусто."
-    else:
-        header = "<b>Мои долги:</b>\n" if kind == 'debt' else "<b>Мои заметки:</b>\n"
-        lines = [header]
-        for idx, (n_id, ttl, cont, dn, _) in enumerate(notes, start=1):
-            mark = "✅" if dn else "❗"
-            short_title = (ttl[:30] + "...") if len(ttl) > 30 else ttl
-            lines.append(f"{idx}️⃣ {mark} {short_title}")
-        text = "\n".join(lines)
-    await query.edit_message_text(text, parse_mode='HTML', reply_markup=kb.cabinet_notes_with_items_kb(kind, notes))
-
-
-async def cabinet_delete_note(update, context):
-    query = update.callback_query
-    await query.answer()
-    try:
-        note_id = int(query.data.split("_")[1])
-    except (ValueError, IndexError):
-        return
-    rec = await asyncio.to_thread(db.get_user_note, note_id)
-    if not rec or rec[1] != update.effective_user.id:
-        await query.answer("❌ Не найдено.", show_alert=True)
-        return
-    await asyncio.to_thread(db.delete_user_note, note_id)
-    kind = rec[2]
-    notes = await asyncio.to_thread(db.get_user_notes, update.effective_user.id, kind)
-    if not notes:
-        text = "Пусто."
-    else:
-        header = "<b>Мои долги:</b>\n" if kind == 'debt' else "<b>Мои заметки:</b>\n"
-        lines = [header]
-        for idx, (n_id, ttl, cont, dn, _) in enumerate(notes, start=1):
-            mark = "✅" if dn else "❗"
-            short_title = (ttl[:30] + "...") if len(ttl) > 30 else ttl
-            lines.append(f"{idx}️⃣ {mark} {short_title}")
-        text = "\n".join(lines)
-    await query.edit_message_text(text, parse_mode='HTML', reply_markup=kb.cabinet_notes_with_items_kb(kind, notes))

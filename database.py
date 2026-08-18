@@ -439,7 +439,7 @@ def get_extra_class(item_id):
             cur.execute(
                 "SELECT id, subject, description, photo_id FROM extra_classes "
                 "WHERE id = %s AND is_active = true;", (item_id,)
-            )
+ )
             row = cur.fetchone()
             if not row:
                 return None
@@ -459,21 +459,11 @@ def deactivate_extra_class(item_id):
         return False
 
 
-def set_user_display_name(user_id, name):
-    try:
-        with get_cursor(commit=True) as cur:
-            cur.execute("UPDATE users SET display_name = %s WHERE id = %s;", (name, user_id))
-            return cur.rowcount > 0
-    except Exception:
-        logger.exception("set_user_display_name failed")
-        return False
-
-
 def get_user_settings_row(user_id):
     try:
         with get_cursor() as cur:
             cur.execute(
-                "SELECT id, username, first_name, display_name, "
+                "SELECT id, username, first_name, "
                 "notify_replacements, notify_announcements, notify_homework, notify_extra_classes "
                 "FROM users WHERE id = %s;",
                 (user_id,),
@@ -510,86 +500,13 @@ def get_all_users_with_username():
     try:
         with get_cursor() as cur:
             cur.execute(
-                "SELECT id, username, first_name, display_name, created_at "
-                "FROM users ORDER BY created_at DESC;"
+                "SELECT id, username, first_name, created_at FROM users ORDER BY created_at DESC;"
             )
-            return [(r["id"], r["username"], r["first_name"], r["display_name"], str(r["created_at"]))
+            return [(r["id"], r["username"], r["first_name"], str(r["created_at"]))
                     for r in cur.fetchall()]
     except Exception:
         logger.exception("get_all_users_with_username failed")
         return []
-
-
-def add_user_note(user_id, kind, title, content):
-    try:
-        with get_cursor(commit=True) as cur:
-            cur.execute(
-                "INSERT INTO user_notes (user_id, kind, title, content, created_at) "
-                "VALUES (%s, %s, %s, %s, NOW()) RETURNING id;",
-                (user_id, kind, title, content),
-            )
-            return cur.fetchone()["id"]
-    except Exception:
-        logger.exception("add_user_note failed")
-        return None
-
-
-def get_user_notes(user_id, kind, include_done=False):
-    try:
-        with get_cursor() as cur:
-            if include_done:
-                cur.execute(
-                    "SELECT id, title, content, is_done, created_at FROM user_notes "
-                    "WHERE user_id = %s AND kind = %s ORDER BY is_done, created_at DESC;",
-                    (user_id, kind),
-                )
-            else:
-                cur.execute(
-                    "SELECT id, title, content, is_done, created_at FROM user_notes "
-                    "WHERE user_id = %s AND kind = %s AND is_done = false ORDER BY created_at DESC;",
-                    (user_id, kind),
-                )
-            return [(r["id"], r["title"], r["content"], r["is_done"], str(r["created_at"]))
-                    for r in cur.fetchall()]
-    except Exception:
-        logger.exception("get_user_notes failed")
-        return []
-
-
-def get_user_note(note_id):
-    try:
-        with get_cursor() as cur:
-            cur.execute(
-                "SELECT id, user_id, kind, title, content, is_done FROM user_notes WHERE id = %s;",
-                (note_id,),
-            )
-            row = cur.fetchone()
-            if not row:
-                return None
-            return (row["id"], row["user_id"], row["kind"], row["title"], row["content"], row["is_done"])
-    except Exception:
-        logger.exception("get_user_note failed")
-        return None
-
-
-def set_user_note_done(note_id, done):
-    try:
-        with get_cursor(commit=True) as cur:
-            cur.execute("UPDATE user_notes SET is_done = %s WHERE id = %s RETURNING id;", (done, note_id))
-            return cur.fetchone() is not None
-    except Exception:
-        logger.exception("set_user_note_done failed")
-        return False
-
-
-def delete_user_note(note_id):
-    try:
-        with get_cursor(commit=True) as cur:
-            cur.execute("DELETE FROM user_notes WHERE id = %s RETURNING id;", (note_id,))
-            return cur.fetchone() is not None
-    except Exception:
-        logger.exception("delete_user_note failed")
-        return False
 
 
 def get_user_ids_with_notify(kind):
@@ -609,13 +526,3 @@ def get_user_ids_with_notify(kind):
     except Exception:
         logger.exception("get_user_ids_with_notify failed")
         return []
-
-
-def delete_user(user_id):
-    try:
-        with get_cursor(commit=True) as cur:
-            cur.execute("DELETE FROM users WHERE id = %s RETURNING id;", (user_id,))
-            return cur.fetchone() is not None
-    except Exception:
-        logger.exception("delete_user failed")
-        return False
