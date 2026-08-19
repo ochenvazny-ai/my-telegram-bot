@@ -112,23 +112,41 @@ def admin_panel_kb():
 
 
 def users_menu_kb():
+    """Подменю: Пользователи / Админы."""
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("👥 Все пользователи", callback_data="users_view")],
+        [InlineKeyboardButton("👤 Пользователи", callback_data="users_view")],
+        [InlineKeyboardButton("   Админы", callback_data="admins_view")],
         [InlineKeyboardButton("🔙 Назад", callback_data="admin_panel")],
     ])
 
 
-def users_paginated_kb(users, page, admin_ids=None):
-    """Список пользователей с пагинацией. Админы помечены короной 👑."""
-    if admin_ids is None:
-        admin_ids = set()
+def admins_only_paginated_kb(admins, page):
+    """Список только админов."""
+    buttons = []
+    for u in admins[page*30:(page+1)*30]:
+        user_id = u[0]
+        name = u[2] or u[1] or "Без имени"
+        short = name[:25] + "..." if len(name) > 25 else name
+        buttons.append([InlineKeyboardButton(f"👑 {short} (ID:{user_id})", callback_data=f"useraction_{user_id}")])
+    nav = []
+    if page > 0:
+        nav.append(InlineKeyboardButton("◀️", callback_data=f"userspage_{page - 1}"))
+    if (page + 1) * 30 < len(admins):
+        nav.append(InlineKeyboardButton("▶️", callback_data=f"userspage_{page + 1}"))
+    if nav:
+        buttons.append(nav)
+    buttons.append([InlineKeyboardButton("🔙 Назад", callback_data="users_menu")])
+    return InlineKeyboardMarkup(buttons)
+
+
+def users_paginated_kb(users, page):
+    """Список всех пользователей (без корон — они в другом подменю)."""
     buttons = []
     for u in users[page*30:(page+1)*30]:
         uid = u[0]
         name = u[2] or u[1] or "Без имени"
         short = name[:25] + "..." if len(name) > 25 else name
-        crown = "👑 " if uid in admin_ids else ""
-        buttons.append([InlineKeyboardButton(f"{crown}{short} (ID:{uid})", callback_data=f"useraction_{uid}")])
+        buttons.append([InlineKeyboardButton(f"{short} (ID:{uid})", callback_data=f"useraction_{uid}")])
     nav = []
     if page > 0:
         nav.append(InlineKeyboardButton("◀️", callback_data=f"userspage_{page - 1}"))
@@ -244,7 +262,7 @@ def delete_ann_kb(anns):
         ann_id = item[0]
         is_note = item[3] if len(item) > 3 else False
         has_photo = len(item) > 4 and item[4]
-        prefix = "📝 " if is_note else ("📎 " if has_photo else "")
+        prefix = "   " if is_note else ("📎 " if has_photo else "")
         text = item[1] or "(без текста)"
         short = text[:28] + "..." if len(text) > 28 else text
         buttons.append([InlineKeyboardButton(f"{idx}. {prefix}{short}", callback_data=f"delann_{ann_id}")])
@@ -260,7 +278,7 @@ def delete_admin_kb(admins, current_user_id, initial_admin_id):
         buttons.append([InlineKeyboardButton(f"{name} (ID {user_id})", callback_data=f"deladmin_{user_id}")])
     if not buttons:
         return None
-    buttons.append([InlineKeyboardButton("🔙 Назад", callback_data="a_admins_menu")])
+    buttons.append([InlineKeyboardButton("🔙 Назад", callback_data="users_menu")])
     return InlineKeyboardMarkup(buttons)
 
 

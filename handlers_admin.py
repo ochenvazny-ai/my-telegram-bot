@@ -80,7 +80,7 @@ async def admins_menu(update, context):
     await query.answer()
     if not await _require_admin(update):
         return
-    await query.edit_message_text("👥 Админы:", reply_markup=kb.admins_menu_kb())
+    await query.edit_message_text("👑 Админы:", reply_markup=kb.admins_menu_kb())
 
 
 async def extra_menu(update, context):
@@ -168,7 +168,7 @@ async def broadcast_hw_to_subscribers(update, context):
     last_task = tasks[-1]
     _, task_text, due_date, _ = last_task
     due_str = f"\n(срок: {due_date})" if due_date else ""
-    msg = f"📚<b>Обновлено ДЗ</b>\n\n{task_text}{due_str}"
+    msg = f"  <b>Обновлено ДЗ</b>\n\n{task_text}{due_str}"
     await query.edit_message_text("⏳ Рассылаю...")
     sent = 0
     failed = 0
@@ -325,12 +325,12 @@ async def del_ann_list(update, context):
         return
     anns = await asyncio.to_thread(db.get_active_announcements)
     if not anns:
-        await query.edit_message_text("📭 Нет.", reply_markup=kb.admin_panel_kb())
+        await query.edit_message_text("   Нет.", reply_markup=kb.admin_panel_kb())
         return
     lines = ["Удалить:\n"]
     for idx, item in enumerate(anns, start=1):
         ann_id, text, created_at, is_note, photo_id = item
-        prefix = "   " if is_note else ("📎 " if photo_id else "")
+        prefix = "📝 " if is_note else ("📎 " if photo_id else "")
         date_part = created_at.split(" ")[0] if created_at else ""
         short = text[:28] + "..." if len(text) > 28 else text
         lines.append(f"{idx}️⃣ {prefix}{date_part}: {short or '(без текста)'}")
@@ -465,25 +465,21 @@ async def view_admins(update, context):
         return
     admins = await asyncio.to_thread(db.get_all_admins)
     if not admins:
-        await query.edit_message_text("📭 Пусто.", reply_markup=kb.back_button("a_admins_menu"))
+        await query.edit_message_text("📭 Пусто.", reply_markup=kb.back_button("users_menu"))
         return
     lines = ["Админы:\n"]
     for idx, (user_id, username, name) in enumerate(admins, start=1):
         lines.append(f"{idx}️⃣ {name} (ID: {user_id})")
-    await query.edit_message_text("\n".join(lines), reply_markup=kb.back_button("a_admins_menu"))
+    await query.edit_message_text("\n".join(lines), reply_markup=kb.back_button("users_menu"))
 
 
 # === УПРАВЛЕНИЕ ПОЛЬЗОВАТЕЛЯМИ ===
-async def _get_admin_ids_set():
-    admins = await asyncio.to_thread(db.get_all_admins)
-    return {a[0] for a in admins}
-
-
 async def users_menu(update, context):
     query = update.callback_query
     await query.answer()
     if not await _require_admin(update):
         return
+    context.user_data['viewing_admins'] = False
     await query.edit_message_text("👥 Пользователи:", reply_markup=kb.users_menu_kb())
 
 
@@ -492,14 +488,30 @@ async def view_users_list(update, context):
     await query.answer()
     if not await _require_admin(update):
         return
+    context.user_data['viewing_admins'] = False
     users = await asyncio.to_thread(db.get_all_users_with_username)
     if not users:
-        await query.edit_message_text("   Нет.", reply_markup=kb.back_button("users_menu"))
+        await query.edit_message_text("📭 Нет.", reply_markup=kb.back_button("users_menu"))
         return
-    admin_ids = await _get_admin_ids_set()
     await query.edit_message_text(
-        f"👥 Пользователи ({len(users)}):\n\n👑 — админ. Нажми на юзера для действий.",
-        reply_markup=kb.users_paginated_kb(users, page=0, admin_ids=admin_ids)
+        f"👤 Пользователи ({len(users)}):\n\nНажми на юзера для действий.",
+        reply_markup=kb.users_paginated_kb(users, page=0)
+    )
+
+
+async def view_admins_list(update, context):
+    query = update.callback_query
+    await query.answer()
+    if not await _require_admin(update):
+        return
+    context.user_data['viewing_admins'] = True
+    admins = await asyncio.to_thread(db.get_all_admins)
+    if not admins:
+        await query.edit_message_text("📭 Нет админов.", reply_markup=kb.back_button("users_menu"))
+        return
+    await query.edit_message_text(
+        f"👑 Админы ({len(admins)}):\n\nНажми на админа для действий.",
+        reply_markup=kb.admins_only_paginated_kb(admins, page=0)
     )
 
 
@@ -509,12 +521,18 @@ async def users_paginated(update, context):
     if not await _require_admin(update):
         return
     page = int(query.data.split("_")[1])
-    users = await asyncio.to_thread(db.get_all_users_with_username)
-    admin_ids = await _get_admin_ids_set()
-    await query.edit_message_text(
-        f"👥 Пользователи (стр. {page + 1}):",
-        reply_markup=kb.users_paginated_kb(users, page=page, admin_ids=admin_ids)
-    )
+    if context.user_data.get('viewing_admins'):
+        admins = await asyncio.to_thread(db.get_all_admins)
+        await query.edit_message_text(
+            f"👑 Админы (стр. {page + 1}):",
+            reply_markup=kb.admins_only_paginated_kb(admins, page=page)
+        )
+    else:
+        users = await asyncio.to_thread(db.get_all_users_with_username)
+        await query.edit_message_text(
+            f"👤 Пользователи (стр. {page + 1}):",
+            reply_markup=kb.users_paginated_kb(users, page=page)
+        )
 
 
 async def user_action_menu(update, context):
@@ -531,7 +549,7 @@ async def user_action_menu(update, context):
     is_admin_user = await asyncio.to_thread(db.is_admin, target_id)
     name = target[2] or target[1] or "Без имени"
     text = (
-        f"👤 <b>{name}</b>\n"
+        f"{'👑' if is_admin_user else '👤'} <b>{name}</b>\n"
         f"Telegram: @{target[1] or '—'}\n"
         f"ID: {target_id}\n"
         f"Админ: {'✅' if is_admin_user else '❌'}\n"
@@ -569,7 +587,7 @@ async def user_toggle_admin(update, context):
     is_admin_user = await asyncio.to_thread(db.is_admin, target_id)
     name = target[2] or target[1] or "Без имени"
     text = (
-        f"👤 <b>{name}</b>\n"
+        f"{'👑' if is_admin_user else '👤'} <b>{name}</b>\n"
         f"Telegram: @{target[1] or '—'}\n"
         f"ID: {target_id}\n"
         f"Админ: {'✅' if is_admin_user else '❌'}\n"
@@ -599,10 +617,9 @@ async def user_delete(update, context):
         return
     await query.answer("✅ Удалён.", show_alert=True)
     users = await asyncio.to_thread(db.get_all_users_with_username)
-    admin_ids = await _get_admin_ids_set()
     await query.edit_message_text(
-        f"👥 Пользователи ({len(users)}):",
-        reply_markup=kb.users_paginated_kb(users, page=0, admin_ids=admin_ids)
+        f"👤 Пользователи ({len(users)}):",
+        reply_markup=kb.users_paginated_kb(users, page=0)
     )
 
 

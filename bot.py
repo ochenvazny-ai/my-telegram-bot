@@ -191,7 +191,7 @@ def main():
     application.add_handler(CallbackQueryHandler(hu.send_schedule_image, pattern="^schedimg_(num|den|cmp)$"))
 
     application.add_handler(MessageHandler(
-        filters.Regex("^📋 Меню$") & ~filters.COMMAND, hu.handle_menu_reply_button
+        filters.Regex("^   Меню$") & ~filters.COMMAND, hu.handle_menu_reply_button
     ))
 
     # Админка
@@ -201,7 +201,6 @@ def main():
     application.add_handler(CallbackQueryHandler(ha.hw_menu, pattern="^a_hw_menu$"))
     application.add_handler(CallbackQueryHandler(ha.broadcast_hw_to_subscribers, pattern="^broadcast_hw$"))
     application.add_handler(CallbackQueryHandler(ha.ann_menu, pattern="^a_ann_menu$"))
-    application.add_handler(CallbackQueryHandler(ha.admins_menu, pattern="^a_admins_menu$"))
     application.add_handler(CallbackQueryHandler(ha.extra_menu, pattern="^a_extra_menu$"))
     application.add_handler(CallbackQueryHandler(ha.broadcast_extra_class, pattern="^broadcast_extra$"))
     application.add_handler(CallbackQueryHandler(ha.bot_settings_menu, pattern="^a_bot_settings$"))
@@ -214,19 +213,20 @@ def main():
     application.add_handler(CallbackQueryHandler(ha.del_ann_pick, pattern="^delann_\\d+$"))
     application.add_handler(CallbackQueryHandler(ha.del_ann_confirm, pattern="^confirm_delann_\\d+$"))
 
+    application.add_handler(CallbackQueryHandler(ha.view_admins, pattern="^a_view_admins$"))
     application.add_handler(CallbackQueryHandler(ha.del_admin_list, pattern="^a_del_admin$"))
     application.add_handler(CallbackQueryHandler(ha.del_admin_pick, pattern="^deladmin_\\d+$"))
     application.add_handler(CallbackQueryHandler(ha.del_admin_confirm, pattern="^confirm_deladmin_\\d+$"))
-    application.add_handler(CallbackQueryHandler(ha.view_admins, pattern="^a_view_admins$"))
 
     application.add_handler(CallbackQueryHandler(ha.extra_del_list, pattern="^a_del_extra$"))
     application.add_handler(CallbackQueryHandler(ha.extra_del_pick, pattern="^delextra_\\d+$"))
     application.add_handler(CallbackQueryHandler(ha.extra_del_confirm, pattern="^confirm_delextra_\\d+$"))
     application.add_handler(CallbackQueryHandler(ha.extra_view, pattern="^a_view_extra$"))
 
-    # Управление пользователями
+    # Управление пользователями (подменю)
     application.add_handler(CallbackQueryHandler(ha.users_menu, pattern="^users_menu$"))
     application.add_handler(CallbackQueryHandler(ha.view_users_list, pattern="^users_view$"))
+    application.add_handler(CallbackQueryHandler(ha.view_admins_list, pattern="^admins_view$"))
     application.add_handler(CallbackQueryHandler(ha.users_paginated, pattern="^userspage_\\d+$"))
     application.add_handler(CallbackQueryHandler(ha.user_action_menu, pattern="^useraction_\\d+$"))
     application.add_handler(CallbackQueryHandler(ha.user_toggle_admin, pattern="^toggleadmin_\\d+$"))
