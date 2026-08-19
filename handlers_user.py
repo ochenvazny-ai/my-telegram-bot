@@ -6,6 +6,7 @@ from telegram.ext import ContextTypesimport database as db
 import keyboards as kb
 import schedule_service as sched
 import schedule_image as sched_img
+from config import WELCOME_NAME
 
 logger = logging.getLogger(__name__)
 
@@ -16,8 +17,8 @@ INFO_TEXT = (
     "📅 Замены — замены на день, указанный на сайте колледжа.\n"
     "📚 Домашка — список актуальных домашних заданий.\n"
     "📢 Объявления — активные объявления от администрации.\n"
-    "   Доп. занятия — дополнительные занятия с расписанием.\n"
-    "👤 Личное — настройки уведомлений.\n"
+    "📚 Доп. занятия — дополнительные занятия с расписанием.\n"
+    "🔔 Уведомления — настройка уведомлений.\n"
     "ℹ️ Учебная инфа — расписание звонков и расписание пар.\n\n"
     "Успехов в учёбе! 📚"
 )
@@ -54,36 +55,30 @@ async def _send_main_menu(context, chat_id, user_id):
 
 async def start(update, context):
     user = update.effective_user
-    # upsert_user НЕ трогает display_name (он только через welcome)
     await asyncio.to_thread(db.upsert_user, user.id, user.username, user.first_name)
 
     display_name = await asyncio.to_thread(db.get_user_display_name, user.id)
     if not display_name:
-        # Первый старт — показываем приветствие и ждём имя
         try:
             await update.message.reply_text(WELCOME_TEXT, reply_markup=kb.reply_menu_button())
         except Exception:
-            pass from config import WELCOME_NAME
+            pass
         return WELCOME_NAME
 
-    # Уже представился — главное меню
     await _send_main_menu(context, update.effective_chat.id, user.id)
     return None
 
 
 async def welcome_finish(update, context):
-    """Обработка введённого имени при первом старте."""
     name = (update.message.text or "").strip()
     user = update.effective_user
     if not name:
         await update.message.reply_text("Имя не может быть пустым. Введи, пожалуйста, своё имя:")
-        from config import WELCOME_NAME
         return WELCOME_NAME
 
     await asyncio.to_thread(db.set_user_display_name, user.id, name)
-    # Показываем приветствие с именем + главное меню
     await update.message.reply_text(
-        f"✅ Отлично, я тебя узнал!\n\nУспехов в учёбе, {name}! 📚"
+        f"✅ Отлично, я тебя узнал!\n\nУспехов в учёбе, {name}!   "
     )
     await _send_main_menu(context, update.effective_chat.id, user.id)
     return None
@@ -94,8 +89,7 @@ async def my_id(update, context):
 
 
 async def handle_menu_reply_button(update, context):
-    """Обрабатывает нажатие reply-кнопки «📋 Меню»."""
-    if update.message.text != "📋 Меню":
+    if update.message.text != "   Меню":
         return
     user_id = update.effective_user.id
     admin = await asyncio.to_thread(db.is_admin, user_id)
@@ -107,14 +101,12 @@ async def handle_menu_reply_button(update, context):
 
 
 async def on_user_blocked_bot(update, context):
-    """Когда юзер блокирует/удаляет бота — удаляем его из БД."""
     try:
         result = update.my_chat_member
         if not result:
             return
         if result.chat.type != "private":
             return
-        # result.new_chat_member.status: 'member', 'left', 'kicked'
         if result.new_chat_member.status in ("left", "kicked"):
             await asyncio.to_thread(db.delete_user_by_id, result.chat.id)
             logger.info("User %s удалён (заблокировал бота)", result.chat.id)
@@ -131,7 +123,6 @@ async def main_menu_callback(update, context):
     try:
         await query.edit_message_text(text, reply_markup=kb.main_menu_kb(admin))
     except Exception:
-        # Если не получилось edit (например, сообщение с фото) — шлём новое
         try:
             await query.message.delete()
         except Exception:
@@ -291,7 +282,7 @@ async def show_bells_menu(update, context):
             logger.exception("del photo")
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
-            text="📞 Расписание звонков. Выберите тип дня:",
+            text="   Расписание звонков. Выберите тип дня:",
             reply_markup=kb.bells_choice_kb(),
         )
         return
@@ -343,7 +334,7 @@ async def show_bells_preholiday(update, context):
             data = await asyncio.to_thread(sched_img.render_bells_preholiday_image)
             await asyncio.to_thread(db.save_image, kind, data)
         except Exception:
- logger.exception("bells_pre failed")
+            logger.exception("bells_pre failed")
             try:
                 await query.edit_message_text("❌ Ошибка генерации.", reply_markup=kb.bells_choice_kb())
             except Exception:
@@ -418,9 +409,8 @@ async def send_schedule_image(update, context):
         pass
 
 
-# ===== ЛИЧНЫЙ КАБИНЕТ (УВЕДОМЛЕНИЯ) =====
+# ===== УВЕДОМЛЕНИЯ (кабинет) =====
 async def _render_cabinet_text_and_kb(user_id):
-    """Собирает текст и клавиатуру для кабинета."""
     s = await asyncio.to_thread(db.get_user_settings_row, user_id)
     name = s.get("display_name") or s.get("first_name") or s.get("username") or "Пользователь"
     repl = "✅ Вкл" if s.get("notify_replacements") else "❌ Выкл"
@@ -436,33 +426,26 @@ async def _render_cabinet_text_and_kb(user_id):
         f"📚 Домашка: {hw}\n"
         f"📖 Доп. занятия: {ec}"
     )
-    return text, name
-
-
-async def show_cabinet(update, context):
+    return textasync def show_cabinet(update, context):
     query = update.callback_query
     await query.answer()
     user_id = update.effective_user.id
-    text, _ = await _render_cabinet_text_and_kb(user_id)
+    text = await _render_cabinet_text_and_kb(user_id)
     await query.edit_message_text(text, parse_mode='HTML', reply_markup=kb.cabinet_menu_kb())
 
 
 async def cabinet_toggle_notify(update, context):
     query = update.callback_query
     await query.answer()
-    # query.data = "toggle_<kind>"
-    kind = query.data.split("_",1)[1]  # replacements / announcements / homework / extra_classes
+    kind = query.data.split("_",1)[1]
     user_id = update.effective_user.id
 
-    # Маппинг kind -> название для отображения в алерте
     kind_label_map = {
         "replacements": "замены",
         "announcements": "объявления",
         "homework": "домашку",
         "extra_classes": "доп. занятия",
     }
-
-    s = await asyncio.to_thread(db.get_user_settings_row, user_id)
     col_map = {
         "replacements": "notify_replacements",
         "announcements": "notify_announcements",
@@ -474,6 +457,7 @@ async def cabinet_toggle_notify(update, context):
         await query.answer("❌ Ошибка.", show_alert=True)
         return
 
+    s = await asyncio.to_thread(db.get_user_settings_row, user_id)
     current = bool(s.get(col))
     new_value = not current
     ok = await asyncio.to_thread(db.set_user_notify, user_id, kind, new_value)
@@ -488,8 +472,7 @@ async def cabinet_toggle_notify(update, context):
     else:
         await query.answer(f"🔕 {label.capitalize()}: ВЫКЛ", show_alert=False)
 
-    # Перерисовываем кабинет с актуальным статусом
-    text, _ = await _render_cabinet_text_and_kb(user_id)
+    text = await _render_cabinet_text_and_kb(user_id)
     try:
         await query.edit_message_text(text, parse_mode='HTML', reply_markup=kb.cabinet_menu_kb())
     except Exception:
