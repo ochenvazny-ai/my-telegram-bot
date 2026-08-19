@@ -29,6 +29,7 @@ def get_cursor(commit=False):
 
 
 def upsert_user(user_id, username=None, first_name=None):
+    """Создаёт/обновляет юзера. display_name НЕ трогает (заполняется только через welcome)."""
     try:
         with get_cursor(commit=True) as cur:
             cur.execute("""
@@ -39,6 +40,36 @@ def upsert_user(user_id, username=None, first_name=None):
             """, (user_id, username, first_name))
     except Exception:
         logger.exception("upsert_user failed")
+
+
+def set_user_display_name(user_id, display_name):
+    try:
+        with get_cursor(commit=True) as cur:
+            cur.execute("UPDATE users SET display_name = %s WHERE id = %s;", (display_name, user_id))
+            return True
+    except Exception:
+        logger.exception("set_user_display_name failed")
+        return False
+
+
+def get_user_display_name(user_id):
+    try:
+        with get_cursor() as cur:
+            cur.execute("SELECT display_name FROM users WHERE id = %s;", (user_id,))
+            row = cur.fetchone()
+            return row["display_name"] if row else None
+    except Exception:
+        logger.exception("get_user_display_name failed")
+        return None
+
+
+def delete_user_by_id(user_id):
+    try:
+        with get_cursor(commit=True) as cur:
+            cur.execute("DELETE FROM users WHERE id = %s;", (user_id,))
+            return True except Exception:
+        logger.exception("delete_user_by_id failed")
+        return False
 
 
 def get_all_user_ids():
@@ -54,7 +85,7 @@ def get_all_user_ids():
 def is_admin(user_id):
     try:
         with get_cursor() as cur:
-            cur.execute("SELECT 1 FROM admins WHERE user_id = %s;", (user_id,))
+ cur.execute("SELECT 1 FROM admins WHERE user_id = %s;", (user_id,))
             return cur.fetchone() is not None
     except Exception:
         logger.exception("is_admin failed")
@@ -439,7 +470,7 @@ def get_extra_class(item_id):
             cur.execute(
                 "SELECT id, subject, description, photo_id FROM extra_classes "
                 "WHERE id = %s AND is_active = true;", (item_id,)
- )
+            )
             row = cur.fetchone()
             if not row:
                 return None
@@ -460,10 +491,11 @@ def deactivate_extra_class(item_id):
 
 
 def get_user_settings_row(user_id):
+    """Возвращает display_name, notify_*, username, first_name."""
     try:
         with get_cursor() as cur:
             cur.execute(
-                "SELECT id, username, first_name, "
+                "SELECT id, username, first_name, display_name, "
                 "notify_replacements, notify_announcements, notify_homework, notify_extra_classes "
                 "FROM users WHERE id = %s;",
                 (user_id,),
@@ -478,6 +510,7 @@ def get_user_settings_row(user_id):
 
 
 def set_user_notify(user_id, kind, enabled):
+    """Переключает тогл уведомления. kind: replacements/announcements/homework/extra_classes."""
     col_map = {
         "replacements": "notify_replacements",
         "announcements": "notify_announcements",
@@ -500,9 +533,9 @@ def get_all_users_with_username():
     try:
         with get_cursor() as cur:
             cur.execute(
-                "SELECT id, username, first_name, created_at FROM users ORDER BY created_at DESC;"
+                "SELECT id, username, first_name, display_name, created_at FROM users ORDER BY created_at DESC;"
             )
-            return [(r["id"], r["username"], r["first_name"], str(r["created_at"]))
+            return [(r["id"], r["username"], r["first_name"], r["display_name"], str(r["created_at"]))
                     for r in cur.fetchall()]
     except Exception:
         logger.exception("get_all_users_with_username failed")

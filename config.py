@@ -36,3 +36,6 @@ ADMIN_ID, ADMIN_NAME = range(9, 11)
 
 EXTRA_NAME, EXTRA_CONTENT = range(20, 22)
 SET_GROUP, SET_BOT_NAME, SET_BOT_PHOTO = range(30, 33)
+
+# Состояние приветствия (ввод имени при первом старте)
+WELCOME_NAME = 40

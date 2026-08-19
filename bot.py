@@ -6,7 +6,7 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 
 from telegram.ext import (
     Application, CommandHandler, MessageHandler, CallbackQueryHandler,
-    ConversationHandler, filters,
+    ConversationHandler, filters, ChatMemberHandler,
 )
 
 import database as db
@@ -17,6 +17,7 @@ from config import (
     BOT_TOKEN, HW_TEXT, HW_DUE, ANN_TEXT, ANN_PHOTO, ANN_CONFIRM,
     REPLNOTE_TEXT, REPLNOTE_CONFIRM, SCHED_UPLOAD_TEXT, SCHED_FIELD_VALUE,
     ADMIN_ID, ADMIN_NAME, EXTRA_NAME, EXTRA_CONTENT, SET_GROUP, SET_BOT_NAME, SET_BOT_PHOTO,
+    WELCOME_NAME,
 )
 
 logging.basicConfig(format="%(asctime)s [%(levelname)s] %(name)s: %(message)s", level=logging.INFO)
@@ -149,7 +150,20 @@ def build_conversations():
         per_message=False,
     )
 
+    # Диалог приветствия (ввод имени при первом старте)
+    conv_welcome = ConversationHandler(
+        entry_points=[CommandHandler("start", hu.start)],
+        states={
+            WELCOME_NAME: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, hu.welcome_finish),
+            ],
+        },
+        fallbacks=[],
+        per_message=False,
+    )
+
     return [
+        conv_welcome,
         conv_add_hw, conv_add_ann, conv_add_replnote, conv_add_admin,
         conv_sched_upload, conv_sched_field,
         conv_extra_add, conv_set_group, conv_set_bot_name, conv_set_bot_photo,
@@ -164,11 +178,19 @@ def main():
     _broadcast_bot = application.bot
     application.add_error_handler(error_handler)
 
-    application.add_handler(CommandHandler("start", hu.start))
-    application.add_handler(CommandHandler("myid", hu.my_id))
-
+    # ConversationHandler'ы (включая /start → welcome)
     for conv in build_conversations():
         application.add_handler(conv)
+
+    # /myid    application.add_handler(CommandHandler("myid", hu.my_id))
+
+    # Обработка удаления/блокировки бота пользователем
+    application.add_handler(ChatMemberHandler(hu.on_user_blocked_bot, ChatMemberHandler.MY_CHAT_MEMBER))
+
+    # Reply-кнопка «📋 Меню»
+    application.add_handler(MessageHandler(
+        filters.Regex("^📋 Меню$") & ~filters.COMMAND, hu.handle_menu_reply_button
+    ))
 
     # Пользовательская часть
     application.add_handler(CallbackQueryHandler(hu.main_menu_callback, pattern="^main_menu$"))
@@ -189,10 +211,6 @@ def main():
     application.add_handler(CallbackQueryHandler(hu.show_bells_preholiday, pattern="^bells_preholiday$"))
     application.add_handler(CallbackQueryHandler(hu.show_sched_img_menu, pattern="^info_sched_img$"))
     application.add_handler(CallbackQueryHandler(hu.send_schedule_image, pattern="^schedimg_(num|den|cmp)$"))
-
-    application.add_handler(MessageHandler(
-        filters.Regex("^   Меню$") & ~filters.COMMAND, hu.handle_menu_reply_button
-    ))
 
     # Админка
     application.add_handler(CallbackQueryHandler(ha.admin_panel_entry, pattern="^admin_panel$"))
@@ -223,7 +241,7 @@ def main():
     application.add_handler(CallbackQueryHandler(ha.extra_del_confirm, pattern="^confirm_delextra_\\d+$"))
     application.add_handler(CallbackQueryHandler(ha.extra_view, pattern="^a_view_extra$"))
 
-    # Управление пользователями (подменю)
+    # Управление пользователями
     application.add_handler(CallbackQueryHandler(ha.users_menu, pattern="^users_menu$"))
     application.add_handler(CallbackQueryHandler(ha.view_users_list, pattern="^users_view$"))
     application.add_handler(CallbackQueryHandler(ha.view_admins_list, pattern="^admins_view$"))

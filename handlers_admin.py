@@ -24,6 +24,18 @@ from config import (
 logger = logging.getLogger(__name__)
 
 
+def _pick_display_name(user_tuple):
+    """Выбирает имя из кортежа пользователя: display_name > first_name > username."""
+    # user_tuple формат (id, username, first_name, display_name, created_at)
+    if len(user_tuple) >= 4 and user_tuple[3]:
+        return user_tuple[3]
+    if len(user_tuple) >= 3 and user_tuple[2]:
+        return user_tuple[2]
+    if len(user_tuple) >= 2 and user_tuple[1]:
+        return user_tuple[1]
+    return "Без имени"
+
+
 async def _require_admin(update):
     query = update.callback_query
     user_id = update.effective_user.id
@@ -168,7 +180,7 @@ async def broadcast_hw_to_subscribers(update, context):
     last_task = tasks[-1]
     _, task_text, due_date, _ = last_task
     due_str = f"\n(срок: {due_date})" if due_date else ""
-    msg = f"  <b>Обновлено ДЗ</b>\n\n{task_text}{due_str}"
+    msg = f"📚<b>Обновлено ДЗ</b>\n\n{task_text}{due_str}"
     await query.edit_message_text("⏳ Рассылаю...")
     sent = 0
     failed = 0
@@ -309,7 +321,7 @@ async def add_ann_confirm(update, context):
         if photo_id:
             broadcast_text += "\n\n📎 Вложение"
         await query.edit_message_text("⏳ Рассылаю...")
-        sent, failed = await _broadcast_to_kind(context.bot, "announcements", broadcast_text)
+ sent, failed = await _broadcast_to_kind(context.bot, "announcements", broadcast_text)
         await query.message.reply_text(f"✅ Разослано {sent}. ❌ Не доставлено {failed}.")
     else:
         await query.edit_message_text("✅ Сохранено.")
@@ -325,7 +337,7 @@ async def del_ann_list(update, context):
         return
     anns = await asyncio.to_thread(db.get_active_announcements)
     if not anns:
-        await query.edit_message_text("   Нет.", reply_markup=kb.admin_panel_kb())
+        await query.edit_message_text("📭 Нет.", reply_markup=kb.admin_panel_kb())
         return
     lines = ["Удалить:\n"]
     for idx, item in enumerate(anns, start=1):
@@ -509,9 +521,11 @@ async def view_admins_list(update, context):
     if not admins:
         await query.edit_message_text("📭 Нет админов.", reply_markup=kb.back_button("users_menu"))
         return
+    # Преобразуем (user_id, username, name) в формат для admins_only_paginated_kb (id, username, first_name, display_name, created_at)
+    admin_rows = [(a[0], a[1], None, a[2], "") for a in admins]
     await query.edit_message_text(
         f"👑 Админы ({len(admins)}):\n\nНажми на админа для действий.",
-        reply_markup=kb.admins_only_paginated_kb(admins, page=0)
+        reply_markup=kb.admins_only_paginated_kb(admin_rows, page=0)
     )
 
 
@@ -523,9 +537,10 @@ async def users_paginated(update, context):
     page = int(query.data.split("_")[1])
     if context.user_data.get('viewing_admins'):
         admins = await asyncio.to_thread(db.get_all_admins)
+        admin_rows = [(a[0], a[1], None, a[2], "") for a in admins]
         await query.edit_message_text(
             f"👑 Админы (стр. {page + 1}):",
-            reply_markup=kb.admins_only_paginated_kb(admins, page=page)
+            reply_markup=kb.admins_only_paginated_kb(admin_rows, page=page)
         )
     else:
         users = await asyncio.to_thread(db.get_all_users_with_username)
@@ -547,13 +562,13 @@ async def user_action_menu(update, context):
         await query.answer("❌ Не найден.", show_alert=True)
         return
     is_admin_user = await asyncio.to_thread(db.is_admin, target_id)
-    name = target[2] or target[1] or "Без имени"
+    name = _pick_display_name(target)
     text = (
-        f"{'👑' if is_admin_user else '👤'} <b>{name}</b>\n"
+        f"{'  ' if is_admin_user else '👤'} <b>{name}</b>\n"
         f"Telegram: @{target[1] or '—'}\n"
         f"ID: {target_id}\n"
         f"Админ: {'✅' if is_admin_user else '❌'}\n"
-        f"Регистрация: {target[3].split(' ')[0] if target[3] else '—'}"
+        f"Регистрация: {target[4].split(' ')[0] if target[4] else '—'}"
     )
     await query.edit_message_text(text, parse_mode='HTML', reply_markup=kb.user_action_kb(target_id, is_admin_user))
 
@@ -577,7 +592,7 @@ async def user_toggle_admin(update, context):
     else:
         users = await asyncio.to_thread(db.get_all_users_with_username)
         target = next((u for u in users if u[0] == target_id), None)
-        name = (target[2] or target[1] or "Пользователь") if target else "Пользователь"
+        name = _pick_display_name(target) if target else "Пользователь"
         await asyncio.to_thread(db.add_admin_to_db, target_id, f"id{target_id}", name)
         await query.answer("✅ Назначен админом.", show_alert=True)
     users = await asyncio.to_thread(db.get_all_users_with_username)
@@ -585,13 +600,13 @@ async def user_toggle_admin(update, context):
     if not target:
         return
     is_admin_user = await asyncio.to_thread(db.is_admin, target_id)
-    name = target[2] or target[1] or "Без имени"
+    name = _pick_display_name(target)
     text = (
         f"{'👑' if is_admin_user else '👤'} <b>{name}</b>\n"
         f"Telegram: @{target[1] or '—'}\n"
         f"ID: {target_id}\n"
         f"Админ: {'✅' if is_admin_user else '❌'}\n"
-        f"Регистрация: {target[3].split(' ')[0] if target[3] else '—'}"
+        f"Регистрация: {target[4].split(' ')[0] if target[4] else '—'}"
     )
     await query.edit_message_text(text, parse_mode='HTML', reply_markup=kb.user_action_kb(target_id, is_admin_user))
 
