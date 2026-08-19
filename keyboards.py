@@ -8,8 +8,8 @@ def main_menu_kb(is_admin_user):
         [InlineKeyboardButton("📚 Домашка", callback_data="menu_hw")],
         [InlineKeyboardButton("📢 Объявления", callback_data="menu_ann")],
         [InlineKeyboardButton("📚 Доп. занятия", callback_data="menu_extra")],
-        [InlineKeyboardButton("👤 Личное", callback_data="cabinet")],
         [InlineKeyboardButton("ℹ️ Учебная инфа", callback_data="menu_info")],
+        [InlineKeyboardButton("🔔 Уведомления", callback_data="cabinet")],
     ]
     if is_admin_user:
         kb.append([InlineKeyboardButton("👑 Админка", callback_data="admin_panel")])
@@ -21,7 +21,7 @@ def reply_menu_button():
 
 
 def back_button(callback_data="main_menu"):
-    return InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Назад", callback_data=callback_data)]])
+    return InlineKeyboardMarkup([[InlineKeyboardButton("   Назад", callback_data=callback_data)]])
 
 
 def cancel_button(callback_data="cancel_action"):
@@ -104,9 +104,8 @@ def admin_panel_kb():
         [InlineKeyboardButton("📚 Домашнее задание", callback_data="a_hw_menu")],
         [InlineKeyboardButton("📢 Объявления", callback_data="a_ann_menu")],
         [InlineKeyboardButton("📚 Доп. занятия", callback_data="a_extra_menu")],
-        [InlineKeyboardButton("⚙️ Настройки бота", callback_data="a_bot_settings")],
-        [InlineKeyboardButton("👥 Админы", callback_data="a_admins_menu")],
         [InlineKeyboardButton("👥 Пользователи", callback_data="users_menu")],
+        [InlineKeyboardButton("⚙️ Настройки бота", callback_data="a_bot_settings")],
         [InlineKeyboardButton("🔙 Главное меню", callback_data="main_menu")],
     ]
     return InlineKeyboardMarkup(kb)
@@ -119,13 +118,17 @@ def users_menu_kb():
     ])
 
 
-def users_paginated_kb(users, page):
+def users_paginated_kb(users, page, admin_ids=None):
+    """Список пользователей с пагинацией. Админы помечены короной 👑."""
+    if admin_ids is None:
+        admin_ids = set()
     buttons = []
     for u in users[page*30:(page+1)*30]:
         uid = u[0]
         name = u[2] or u[1] or "Без имени"
         short = name[:25] + "..." if len(name) > 25 else name
-        buttons.append([InlineKeyboardButton(f"{short} (ID:{uid})", callback_data=f"useraction_{uid}")])
+        crown = "👑 " if uid in admin_ids else ""
+        buttons.append([InlineKeyboardButton(f"{crown}{short} (ID:{uid})", callback_data=f"useraction_{uid}")])
     nav = []
     if page > 0:
         nav.append(InlineKeyboardButton("◀️", callback_data=f"userspage_{page - 1}"))
@@ -219,7 +222,7 @@ def bot_settings_kb():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("🔁 Смена", callback_data="a_shift")],
         [InlineKeyboardButton("⚙️ Расписание", callback_data="a_sched_menu")],
-        [InlineKeyboardButton("📝 Группа", callback_data="a_set_group")],
+        [InlineKeyboardButton("   Группа", callback_data="a_set_group")],
         [InlineKeyboardButton("✏️ Название бота", callback_data="a_set_botname")],
         [InlineKeyboardButton("🖼 Картинка бота", callback_data="a_set_botphoto")],
         [InlineKeyboardButton("🔙 Назад", callback_data="admin_panel")],

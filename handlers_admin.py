@@ -330,7 +330,7 @@ async def del_ann_list(update, context):
     lines = ["Удалить:\n"]
     for idx, item in enumerate(anns, start=1):
         ann_id, text, created_at, is_note, photo_id = item
-        prefix = "📝 " if is_note else ("📎 " if photo_id else "")
+        prefix = "   " if is_note else ("📎 " if photo_id else "")
         date_part = created_at.split(" ")[0] if created_at else ""
         short = text[:28] + "..." if len(text) > 28 else text
         lines.append(f"{idx}️⃣ {prefix}{date_part}: {short or '(без текста)'}")
@@ -474,6 +474,11 @@ async def view_admins(update, context):
 
 
 # === УПРАВЛЕНИЕ ПОЛЬЗОВАТЕЛЯМИ ===
+async def _get_admin_ids_set():
+    admins = await asyncio.to_thread(db.get_all_admins)
+    return {a[0] for a in admins}
+
+
 async def users_menu(update, context):
     query = update.callback_query
     await query.answer()
@@ -489,11 +494,12 @@ async def view_users_list(update, context):
         return
     users = await asyncio.to_thread(db.get_all_users_with_username)
     if not users:
-        await query.edit_message_text("📭 Нет.", reply_markup=kb.back_button("users_menu"))
+        await query.edit_message_text("   Нет.", reply_markup=kb.back_button("users_menu"))
         return
+    admin_ids = await _get_admin_ids_set()
     await query.edit_message_text(
-        f"👥 Пользователи ({len(users)}):\n\nНажми на юзера для действий.",
-        reply_markup=kb.users_paginated_kb(users, page=0)
+        f"👥 Пользователи ({len(users)}):\n\n👑 — админ. Нажми на юзера для действий.",
+        reply_markup=kb.users_paginated_kb(users, page=0, admin_ids=admin_ids)
     )
 
 
@@ -504,9 +510,10 @@ async def users_paginated(update, context):
         return
     page = int(query.data.split("_")[1])
     users = await asyncio.to_thread(db.get_all_users_with_username)
+    admin_ids = await _get_admin_ids_set()
     await query.edit_message_text(
         f"👥 Пользователи (стр. {page + 1}):",
-        reply_markup=kb.users_paginated_kb(users, page=page)
+        reply_markup=kb.users_paginated_kb(users, page=page, admin_ids=admin_ids)
     )
 
 
@@ -592,9 +599,10 @@ async def user_delete(update, context):
         return
     await query.answer("✅ Удалён.", show_alert=True)
     users = await asyncio.to_thread(db.get_all_users_with_username)
+    admin_ids = await _get_admin_ids_set()
     await query.edit_message_text(
         f"👥 Пользователи ({len(users)}):",
-        reply_markup=kb.users_paginated_kb(users, page=0)
+        reply_markup=kb.users_paginated_kb(users, page=0, admin_ids=admin_ids)
     )
 
 
