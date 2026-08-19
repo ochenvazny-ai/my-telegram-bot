@@ -29,7 +29,7 @@ def get_cursor(commit=False):
 
 
 def upsert_user(user_id, username=None, first_name=None):
-    """Создаёт/обновляет юзера. display_name НЕ трогает (заполняется только через welcome)."""
+    """Создаёт/обновляет юзера. display_name НЕ трогает."""
     try:
         with get_cursor(commit=True) as cur:
             cur.execute("""
@@ -67,7 +67,8 @@ def delete_user_by_id(user_id):
     try:
         with get_cursor(commit=True) as cur:
             cur.execute("DELETE FROM users WHERE id = %s;", (user_id,))
-            return True except Exception:
+            return True
+    except Exception:
         logger.exception("delete_user_by_id failed")
         return False
 
@@ -85,7 +86,7 @@ def get_all_user_ids():
 def is_admin(user_id):
     try:
         with get_cursor() as cur:
- cur.execute("SELECT 1 FROM admins WHERE user_id = %s;", (user_id,))
+            cur.execute("SELECT 1 FROM admins WHERE user_id = %s;", (user_id,))
             return cur.fetchone() is not None
     except Exception:
         logger.exception("is_admin failed")
@@ -348,7 +349,7 @@ def save_schedule_cache(target_date, week_type, day, entries):
                     target_date, week_type, day, e["pair_num"], e["subject"], e.get("teacher", ""),
                     e.get("room", ""), e.get("is_replaced", False),
                     e.get("original_subject"), e.get("original_teacher"), e.get("original_room"),
-                ))
+ ))
         return True
     except Exception:
         logger.exception("save_schedule_cache failed")
@@ -458,7 +459,7 @@ def get_active_extra_classes():
                 "WHERE is_active = true ORDER BY created_at DESC;"
             )
             return [(r["id"], r["subject"], r["description"], r["photo_id"], str(r["created_at"]))
-                    for r in cur.fetchall()]
+ for r in cur.fetchall()]
     except Exception:
         logger.exception("get_active_extra_classes failed")
         return []
@@ -470,7 +471,7 @@ def get_extra_class(item_id):
             cur.execute(
                 "SELECT id, subject, description, photo_id FROM extra_classes "
                 "WHERE id = %s AND is_active = true;", (item_id,)
-            )
+ )
             row = cur.fetchone()
             if not row:
                 return None
@@ -491,7 +492,6 @@ def deactivate_extra_class(item_id):
 
 
 def get_user_settings_row(user_id):
-    """Возвращает display_name, notify_*, username, first_name."""
     try:
         with get_cursor() as cur:
             cur.execute(
@@ -510,7 +510,6 @@ def get_user_settings_row(user_id):
 
 
 def set_user_notify(user_id, kind, enabled):
-    """Переключает тогл уведомления. kind: replacements/announcements/homework/extra_classes."""
     col_map = {
         "replacements": "notify_replacements",
         "announcements": "notify_announcements",
