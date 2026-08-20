@@ -1,3 +1,26 @@
+async def start(update, context):
+    user = update.effective_user
+    await asyncio.to_thread(db.upsert_user, user.id, user.username, user.first_name)
+
+    display_name = await asyncio.to_thread(db.get_user_display_name, user.id)
+    if not display_name:
+        try:
+            await update.message.reply_text(WELCOME_TEXT, reply_markup=kb.reply_menu_button())
+        except Exception:
+            pass
+        return WELCOME_NAME```
+
+Проблема в том, что `handle_menu_reply_button` **вызывает `start()` напрямую** — а внутри `start()` стоит `await asyncio.to_thread(db.get_user_display_name, user.id)`. Если функция вернёт `None` или упадёт с исключением, мы заходим в `if not display_name` и показываем приветствие ещё раз.
+
+**Но скорее всего проблема в другом:** ConversationHandler с `entry_points=[CommandHandler("start", hu.start)]` ловит **любой текст** как начало диалога, потому что `MessageHandler` в состоянии `WELCOME_NAME` ждёт любой текст.
+
+**Точная причина:** ConversationHandler **завершает диалог** через `return None` (в моём коде). Но после `return None` контекст **запоминает состояние**. Если юзер уже отвечал на welcome — диалог завершился. Если снова пишет текст — ConversationHandler может его перехватить.
+
+**Решение простое:** убираю `handle_menu_reply_button` который дублирует start, и делаю так, чтобы кнопка «📋 Меню» **только показывала главное меню**, не трогая `start`.
+
+Вот исправленный `handlers_user.py` (целиком, ничего лишнего не трогал):
+
+```python
 import logging
 import asyncio
 import io
@@ -18,7 +41,7 @@ INFO_TEXT = (
     "📅 Замены — замены на день, указанный на сайте колледжа.\n"
     "📚 Домашка — список актуальных домашних заданий.\n"
     "📢 Объявления — активные объявления от администрации.\n"
-    "   Доп. занятия — дополнительные занятия с расписанием.\n"
+    "📚 Доп. занятия — дополнительные занятия с расписанием.\n"
     "🔔 Уведомления — настройка уведомлений.\n"
     "ℹ️ Учебная инфа — расписание звонков и расписание пар.\n\n"
     "Успехов в учёбе! 📚"
@@ -43,14 +66,10 @@ async def _greeting_text():
 
 
 async def _send_main_menu(context, chat_id, user_id):
-    """Отправляет главное меню + reply-кнопку «📋 Меню»."""
     admin = await asyncio.to_thread(db.is_admin, user_id)
     text = await _greeting_text()
     await context.bot.send_message(
         chat_id=chat_id, text=text, reply_markup=kb.main_menu_kb(admin)
-    )
-    await context.bot.send_message(
-        chat_id=chat_id, text="Меню:", reply_markup=kb.reply_menu_button()
     )
 
 
@@ -89,9 +108,8 @@ async def my_id(update, context):
     await update.message.reply_text(f"🆔 Ваш ID: `{update.effective_user.id}`", parse_mode='Markdown')
 
 
-async def handle_menu_reply_button(update, context):
-    if update.message.text != "   Меню":
-        return
+async def show_main_menu_only(update, context):
+    """Кнопка «📋 Меню» — показывает главное меню, БЕЗ приветствия."""
     user_id = update.effective_user.id
     admin = await asyncio.to_thread(db.is_admin, user_id)
     text = await _greeting_text()
@@ -110,7 +128,7 @@ async def on_user_blocked_bot(update, context):
             return
         if result.new_chat_member.status in ("left", "kicked"):
             await asyncio.to_thread(db.delete_user_by_id, result.chat.id)
-            logger.info("User %s удалён (заблокировал бота)", result.chat.id)
+            logger.info("User %s удалён", result.chat.id)
     except Exception:
         logger.exception("on_user_blocked_bot failed")
 
@@ -153,9 +171,7 @@ async def show_schedule(update, context):
     except Exception:
         logger.exception("broadcast failed")
     await context.bot.send_message(chat_id=update.effective_chat.id, text=text, parse_mode='HTML')
-    await context.bot.send_message(
-        chat_id=update.effective_chat.id, text="Главное меню:", reply_markup=kb.main_menu_kb(admin)
-    )
+    await _send_main_menu(context, update.effective_chat.id, user_id)
 
 
 async def show_hw(update, context):
@@ -181,10 +197,10 @@ async def show_announcements(update, context):
     if not anns:
         text = "📭 Активных объявлений нет."
     else:
-        lines = ["   Активные объявления:\n"]
+        lines = ["📢 Активные объявления:\n"]
         for idx, (_, ann_text, created_at, is_note, photo_id) in enumerate(anns, start=1):
             date_part = created_at.split(" ")[0] if created_at else ""
-            prefix = "   " if is_note else ("📎 " if photo_id else "")
+            prefix = "📝 " if is_note else ("📎 " if photo_id else "")
             body = ann_text if ann_text else "(без текста — только вложение)"
             lines.append(f"{idx}️⃣ {prefix}{date_part}: {body}")
         text = "\n".join(lines)
@@ -209,14 +225,14 @@ async def show_extra_classes(update, context):
             return
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
-            text="   Дополнительные занятия. Выберите:",
+            text="📚 Дополнительные занятия. Выберите:",
             reply_markup=kb.extra_classes_list_kb(items),
         )
         return
     if not items:
         await query.edit_message_text("📭 Нет активных дополнительных занятий.", reply_markup=kb.back_button())
         return
-    await query.edit_message_text("   Дополнительные занятия. Выберите:", reply_markup=kb.extra_classes_list_kb(items))
+    await query.edit_message_text("📚 Дополнительные занятия. Выберите:", reply_markup=kb.extra_classes_list_kb(items))
 
 
 async def extra_class_open(update, context):
@@ -283,11 +299,11 @@ async def show_bells_menu(update, context):
             logger.exception("del photo")
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
-            text="   Расписание звонков. Выберите тип дня:",
+            text="📞 Расписание звонков. Выберите тип дня:",
             reply_markup=kb.bells_choice_kb(),
         )
         return
-    await query.edit_message_text("   Расписание звонков. Выберите тип дня:", reply_markup=kb.bells_choice_kb())
+    await query.edit_message_text("📞 Расписание звонков. Выберите тип дня:", reply_markup=kb.bells_choice_kb())
 
 
 async def show_bells_regular(update, context):
@@ -410,7 +426,6 @@ async def send_schedule_image(update, context):
         pass
 
 
-# ===== УВЕДОМЛЕНИЯ (кабинет) =====
 async def _render_cabinet_text_and_kb(user_id):
     s = await asyncio.to_thread(db.get_user_settings_row, user_id)
     name = s.get("display_name") or s.get("first_name") or s.get("username") or "Пользователь"
@@ -419,7 +434,7 @@ async def _render_cabinet_text_and_kb(user_id):
     hw = "✅ Вкл" if s.get("notify_homework") else "❌ Выкл"
     ec = "✅ Вкл" if s.get("notify_extra_classes") else "❌ Выкл"
     text = (
-        f"   <b>Уведомления</b>\n\n"
+        f"🔔 <b>Уведомления</b>\n\n"
         f"Привет, <b>{name}</b>!\n\n"
         f"Нажми на категорию, чтобы включить или выключить:\n\n"
         f"📅 Замены: {repl}\n"

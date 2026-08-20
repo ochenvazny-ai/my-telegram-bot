@@ -189,7 +189,7 @@ def main():
 
     # Reply-кнопка «📋 Меню»
     application.add_handler(MessageHandler(
-        filters.Regex("^📋 Меню$") & ~filters.COMMAND, hu.handle_menu_reply_button
+        filters.Regex("^   Меню$") & ~filters.COMMAND, hu.show_main_menu_only
     ))
 
     # Пользовательская часть
