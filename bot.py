@@ -17,7 +17,7 @@ from config import (
     BOT_TOKEN, HW_TEXT, HW_DUE, ANN_TEXT, ANN_PHOTO, ANN_CONFIRM,
     REPLNOTE_TEXT, REPLNOTE_CONFIRM, SCHED_UPLOAD_TEXT, SCHED_FIELD_VALUE,
     ADMIN_ID, ADMIN_NAME, EXTRA_NAME, EXTRA_CONTENT,
-    SET_GROUP, SET_BOT_NAME, SET_BOT_PHOTO, SET_SUPPORT_USERNAME, SET_SUPPORT_LINK,
+    SET_GROUP, SET_BOT_NAME, SET_BOT_PHOTO,
 )
 from handlers_user import WELCOME_NAME
 
@@ -36,6 +36,7 @@ class HealthHandler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.end_headers()
         self.wfile.write(b"OK")
+
     def log_message(self, fmt, *args):
         pass
 
@@ -165,26 +166,11 @@ def build_conversations():
         per_message=False,
     )
 
-    conv_set_support_username = ConversationHandler(
-        entry_points=[CallbackQueryHandler(ha.set_support_username_start, pattern="^a_set_support_username$")],
-        states={SET_SUPPORT_USERNAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, ha.set_support_username_finish)]},
-        fallbacks=fallback,
-        per_message=False,
-    )
-
-    conv_set_support_link = ConversationHandler(
-        entry_points=[CallbackQueryHandler(ha.set_support_link_start, pattern="^a_set_support_link$")],
-        states={SET_SUPPORT_LINK: [MessageHandler(filters.TEXT & ~filters.COMMAND, ha.set_support_link_finish)]},
-        fallbacks=fallback,
-        per_message=False,
-    )
-
     return [
         conv_welcome,
         conv_add_hw, conv_add_ann, conv_add_replnote, conv_add_admin,
         conv_sched_upload, conv_sched_field,
         conv_extra_add, conv_set_group, conv_set_bot_name, conv_set_bot_photo,
-        conv_set_support_username, conv_set_support_link,
     ]
 
 
@@ -251,6 +237,7 @@ def main():
     application.add_handler(CallbackQueryHandler(ha.extra_del_confirm, pattern="^confirm_delextra_\\d+$"))
     application.add_handler(CallbackQueryHandler(ha.extra_view, pattern="^a_view_extra$"))
 
+    # Пользователи / Админы / Забаненные
     application.add_handler(CallbackQueryHandler(ha.users_menu, pattern="^users_menu$"))
     application.add_handler(CallbackQueryHandler(ha.view_users_list, pattern="^users_view$"))
     application.add_handler(CallbackQueryHandler(ha.view_admins_list, pattern="^admins_view$"))
@@ -279,6 +266,7 @@ def main():
     application.add_handler(CallbackQueryHandler(ha.back_to_admin_panel, pattern="^cancel_deladmin$"))
     application.add_handler(CallbackQueryHandler(ha.back_to_admin_panel, pattern="^cancel_delextra$"))
     application.add_handler(CallbackQueryHandler(ha.back_to_admin_panel, pattern="^cancel_schedupload$"))
+    application.add_handler(CallbackQueryHandler(ha.back_to_admin_panel, pattern="^cancel_unbanuser$"))
 
     logger.info("Бот запущен.")
     application.run_polling(drop_pending_updates=True)

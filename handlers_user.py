@@ -1,7 +1,7 @@
 import logging
 import asyncio
 import io
-from telegram.ext import ContextTypes
+from telegram.ext import ContextTypes, ConversationHandler
 import database as db
 import keyboards as kb
 import schedule_service as sched
@@ -34,15 +34,7 @@ WELCOME_TEXT = (
     "✍️ Введи, пожалуйста, своё имя:"
 )
 
-
-def _ban_text_sync():
-    username = db.get_support_username()
-    link = db.get_support_link()
-    return (
-        "   <b>Ваш аккаунт забанен!</b>\n\n"
-        f"Если это произошло по ошибке или у вас есть вопросы, "
-        f"обратитесь к администрации: <a href=\"{link}\">{username}</a>"
-    )
+BAN_TEXT = "🚫 Ваш аккаунт забанен!"
 
 
 async def _greeting_text():
@@ -58,16 +50,13 @@ async def _send_main_menu(context, chat_id, user_id):
     )
 
 
-async def _is_banned(user_id):
-    return await asyncio.to_thread(db.is_user_banned, user_id)
-
-
 async def _check_banned_message(update, context):
-    """Для текстовых сообщений. Отвечает бан-сообщением, возвращает True если забанен."""
+    """Если юзер забанен — отвечает бан-сообщением, возвращает True."""
     user_id = update.effective_user.id
-    if await _is_banned(user_id):
+    is_banned = await asyncio.to_thread(db.is_user_banned, user_id)
+    if is_banned:
         try:
-            await update.message.reply_text(_ban_text_sync(), parse_mode='HTML')
+            await update.message.reply_text(BAN_TEXT)
         except Exception:
             pass
         return True
@@ -75,15 +64,13 @@ async def _check_banned_message(update, context):
 
 
 async def _check_banned_callback(update, context):
-    """Для callback-кнопок. Показывает бан-алерт."""
+    """Если юзер забанен — показывает алерт, возвращает True."""
     user_id = update.effective_user.id
-    if await _is_banned(user_id):
+    is_banned = await asyncio.to_thread(db.is_user_banned, user_id)
+    if is_banned:
         query = update.callback_query
         try:
-            await query.answer(
-                "Ваш аккаунт забанен. Обратитесь к администрации.",
-                show_alert=True,
-            )
+            await query.answer(BAN_TEXT, show_alert=True)
         except Exception:
             pass
         return True
@@ -99,7 +86,7 @@ async def start(update, context):
         await update.message.reply_text(WELCOME_TEXT, reply_markup=kb.reply_menu_button())
     except Exception:
         pass
-    return 0
+    return 0  # WELCOME_NAME
 
 
 async def welcome_finish(update, context):
@@ -111,7 +98,8 @@ async def welcome_finish(update, context):
         await update.message.reply_text("Имя не может быть пустым. Введи, пожалуйста, своё имя:")
         return 0
     await asyncio.to_thread(db.set_user_display_name, user.id, name)
-    await update.message.reply_text(f"✅ Отлично, я тебя узнал!\n\nУспехов в учёбе, {name}!   ")
+    # ВСЕГДА «Я тебя узнал» — даже если имя уже было
+    await update.message.reply_text(f"✅ Отлично, я тебя узнал!\n\nУспехов в учёбе, {name}! 📚")
     await _send_main_menu(context, update.effective_chat.id, user.id)
     return ConversationHandler.END
 
@@ -222,7 +210,7 @@ async def show_announcements(update, context):
         lines = ["   Активные объявления:\n"]
         for idx, (_, ann_text, created_at, is_note, photo_id) in enumerate(anns, start=1):
             date_part = created_at.split(" ")[0] if created_at else ""
-            prefix = "   " if is_note else ("📎 " if photo_id else "")
+            prefix = "📝 " if is_note else ("📎 " if photo_id else "")
             body = ann_text if ann_text else "(без текста — только вложение)"
             lines.append(f"{idx}️⃣ {prefix}{date_part}: {body}")
         text = "\n".join(lines)
@@ -256,7 +244,7 @@ async def show_extra_classes(update, context):
     if not items:
         await query.edit_message_text("📭 Нет активных дополнительных занятий.", reply_markup=kb.back_button())
         return
-    await query.edit_message_text("   Дополнительные занятия. Выберите:", reply_markup=kb.extra_classes_list_kb(items))
+    await query.edit_message_text("📚 Дополнительные занятия. Выберите:", reply_markup=kb.extra_classes_list_kb(items))
 
 
 async def extra_class_open(update, context):
@@ -333,7 +321,7 @@ async def show_bells_menu(update, context):
             reply_markup=kb.bells_choice_kb(),
         )
         return
-    await query.edit_message_text("   Расписание звонков. Выберите тип дня:", reply_markup=kb.bells_choice_kb())
+    await query.edit_message_text("📞 Расписание звонков. Выберите тип дня:", reply_markup=kb.bells_choice_kb())
 
 
 async def show_bells_regular(update, context):
@@ -472,7 +460,7 @@ async def _render_cabinet_text_and_kb(user_id):
     hw = "✅ Вкл" if s.get("notify_homework") else "❌ Выкл"
     ec = "✅ Вкл" if s.get("notify_extra_classes") else "❌ Выкл"
     text = (
-        f"   <b>Уведомления</b>\n\n"
+        f"🔔 <b>Уведомления</b>\n\n"
         f"Привет, <b>{name}</b>!\n\n"
         f"Нажми на категорию, чтобы включить или выключить:\n\n"
         f"📅 Замены: {repl}\n"
@@ -541,4 +529,3 @@ async def cabinet_toggle_notify(update, context):
 
 
 WELCOME_NAME = 0
-from telegram.ext import ConversationHandler

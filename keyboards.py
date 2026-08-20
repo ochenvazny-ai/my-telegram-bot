@@ -4,7 +4,7 @@ from config import WEEKDAYS_RU
 
 def main_menu_kb(is_admin_user):
     kb = [
-        [InlineKeyboardButton("   Замены", callback_data="menu_zam")],
+        [InlineKeyboardButton("📅 Замены", callback_data="menu_zam")],
         [InlineKeyboardButton("📚 Домашка", callback_data="menu_hw")],
         [InlineKeyboardButton("📢 Объявления", callback_data="menu_ann")],
         [InlineKeyboardButton("📚 Доп. занятия", callback_data="menu_extra")],
@@ -21,7 +21,7 @@ def reply_menu_button():
 
 
 def back_button(callback_data="main_menu"):
-    return InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Назад", callback_data=callback_data)]])
+    return InlineKeyboardMarkup([[InlineKeyboardButton("   Назад", callback_data=callback_data)]])
 
 
 def cancel_button(callback_data="cancel_action"):
@@ -107,13 +107,16 @@ def admin_panel_kb():
     return InlineKeyboardMarkup(kb)
 
 
-def users_menu_kb():
-    return InlineKeyboardMarkup([
+def users_menu_kb(show_banned=False):
+    """Если есть забаненные — показываем третий пункт."""
+    buttons = [
         [InlineKeyboardButton("👤 Пользователи", callback_data="users_view")],
         [InlineKeyboardButton("👑 Админы", callback_data="admins_view")],
-        [InlineKeyboardButton("🚫 Забаненные", callback_data="banned_view")],
-        [InlineKeyboardButton("🔙 Назад", callback_data="admin_panel")],
-    ])
+    ]
+    if show_banned:
+        buttons.append([InlineKeyboardButton("🚫 Забаненные", callback_data="banned_view")])
+    buttons.append([InlineKeyboardButton("🔙 Назад", callback_data="admin_panel")])
+    return InlineKeyboardMarkup(buttons)
 
 
 def admins_only_paginated_kb(admins, page):
@@ -153,13 +156,13 @@ def users_paginated_kb(users, page):
 
 
 def banned_paginated_kb(rows, page):
-    """Список забаненных. rows: (id, username, first_name, display_name, banned_at)."""
+    """Список забаненных. rows: (id, username, first_name, display_name)."""
     buttons = []
     for r in rows[page*30:(page+1)*30]:
-        user_id, _u, _f, display_name, banned_at = r
+        user_id, _u, _f, display_name = r
         name = display_name or _u or _f or "Без имени"
         short = name[:25] + "..." if len(name) > 25 else name
-        buttons.append([InlineKeyboardButton(f"🚫 {short} (ID:{user_id})", callback_data=f"unbanuser_{user_id}")])
+        buttons.append([InlineKeyboardButton(f"   {short} (ID:{user_id})", callback_data=f"unbanuser_{user_id}")])
     nav = []
     if page > 0:
         nav.append(InlineKeyboardButton("◀️", callback_data=f"userspage_{page - 1}"))
@@ -172,9 +175,9 @@ def banned_paginated_kb(rows, page):
 
 
 def user_action_kb(user_id, is_admin_user):
+    admin_label = "❌ Снять с админа" if is_admin_user else "✅ Сделать админом"
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("✅ Сделать админом" if not is_admin_user else "❌ Снять с админа",
- callback_data=f"toggleadmin_{user_id}")],
+        [InlineKeyboardButton(admin_label, callback_data=f"toggleadmin_{user_id}")],
         [InlineKeyboardButton("🚫 Забанить", callback_data=f"banuser_{user_id}")],
         [InlineKeyboardButton("🔙 К списку", callback_data="users_view")],
     ])
@@ -253,9 +256,7 @@ def bot_settings_kb():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("🔁 Смена", callback_data="a_shift")],
         [InlineKeyboardButton("⚙️ Расписание", callback_data="a_sched_menu")],
-        [InlineKeyboardButton("👤 Юзер-админ (юзернейм)", callback_data="a_set_support_username")],
-        [InlineKeyboardButton("🔗 Юзер-админ (ссылка)", callback_data="a_set_support_link")],
-        [InlineKeyboardButton("📝 Группа", callback_data="a_set_group")],
+        [InlineKeyboardButton("   Группа", callback_data="a_set_group")],
         [InlineKeyboardButton("✏️ Название бота", callback_data="a_set_botname")],
         [InlineKeyboardButton("🖼 Картинка бота", callback_data="a_set_botphoto")],
         [InlineKeyboardButton("🔙 Назад", callback_data="admin_panel")],
@@ -314,4 +315,36 @@ def delete_all_day_kb():
 
 
 def weekday_choice_kb():
-    buttons = [[InlineKeyb
+    buttons = [[InlineKeyboardButton(WEEKDAYS_RU[i].capitalize(), callback_data=f"schedday_{i}") for i in range(6)]]
+    buttons.append([InlineKeyboardButton("🔙 Назад", callback_data="a_sched_menu")])
+    return InlineKeyboardMarkup(buttons)
+
+
+def week_type_kb(day_index):
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("Числитель", callback_data=f"weektype_Числитель_{day_index}")],
+        [InlineKeyboardButton("Знаменатель", callback_data=f"weektype_Знаменатель_{day_index}")],
+        [InlineKeyboardButton("🗑 Удалить день", callback_data=f"delallday_{day_index}")],
+        [InlineKeyboardButton("🔙 Назад", callback_data="a_sched_menu")],
+    ])
+
+
+def pair_choice_kb(pairs, week_type, day_index):
+    buttons = []
+    for pair_num in sorted(pairs.keys()):
+        info = pairs[pair_num]
+        buttons.append([InlineKeyboardButton(
+            f"{pair_num}. {info['subject']}", callback_data=f"editpair_{week_type}_{day_index}_{pair_num}")])
+    buttons.append([InlineKeyboardButton("➕ Добавить пару", callback_data=f"newpair_{week_type}_{day_index}")])
+    buttons.append([InlineKeyboardButton("🔙 Назад", callback_data=f"schedday_{day_index}")])
+    return InlineKeyboardMarkup(buttons)
+
+
+def pair_field_kb(week_type, day_index, pair_num):
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("Предмет", callback_data=f"field_subject_{week_type}_{day_index}_{pair_num}")],
+        [InlineKeyboardButton("Преподаватель", callback_data=f"field_teacher_{week_type}_{day_index}_{pair_num}")],
+        [InlineKeyboardButton("Аудитория", callback_data=f"field_room_{week_type}_{day_index}_{pair_num}")],
+        [InlineKeyboardButton("🗑 Удалить пару", callback_data=f"delpair_{week_type}_{day_index}_{pair_num}")],
+        [InlineKeyboardButton("🔙 Назад", callback_data=f"weektype_{week_type}_{day_index}")],
+    ])
