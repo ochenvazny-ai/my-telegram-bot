@@ -18,7 +18,7 @@ INFO_TEXT = (
     "📅 Замены — замены на день, указанный на сайте колледжа.\n"
     "📚 Домашка — список актуальных домашних заданий.\n"
     "📢 Объявления — активные объявления от администрации.\n"
-    "   Доп. занятия — дополнительные занятия с расписанием.\n"
+    "📚 Доп. занятия — дополнительные занятия с расписанием.\n"
     "🔔 Уведомления — настройка уведомлений.\n"
     "ℹ️ Учебная инфа — расписание звонков и расписание пар.\n\n"
     "Успехов в учёбе! 📚"
@@ -51,34 +51,33 @@ async def _send_main_menu(context, chat_id, user_id):
 
 
 async def start(update, context):
-    """Только для /start — всегда показывает приветствие, ВСЕГДА."""
     user = update.effective_user
     await asyncio.to_thread(db.upsert_user, user.id, user.username, user.first_name)
-    try:
-        await update.message.reply_text(WELCOME_TEXT, reply_markup=kb.reply_menu_button())
-    except Exception:
-        pass
-    return WELCOME_NAME
+
+    display_name = await asyncio.to_thread(db.get_user_display_name, user.id)
+    if not display_name:
+        try:
+            await update.message.reply_text(WELCOME_TEXT, reply_markup=kb.reply_menu_button())
+        except Exception:
+            pass
+        return WELCOME_NAME
+
+    await _send_main_menu(context, update.effective_chat.id, user.id)
+    return None
 
 
 async def welcome_finish(update, context):
-    """Обработка введённого имени. Всегда сохраняет (повторная регистрация = перезапись)."""
     name = (update.message.text or "").strip()
     user = update.effective_user
     if not name:
         await update.message.reply_text("Имя не может быть пустым. Введи, пожалуйста, своё имя:")
         return WELCOME_NAME
 
-    old_name = await asyncio.to_thread(db.get_user_display_name, user.id)
+    old_name = await asyncio.to_thread(db.get_user_display_name, user.id) or "неизвестно"
     await asyncio.to_thread(db.set_user_display_name, user.id, name)
-    if old_name:
-        await update.message.reply_text(
-            f"✅ Имя обновлено:<b>{old_name}</b> → <b>{name}</b>"
-        )
-    else:
-        await update.message.reply_text(
-            f"✅ Отлично, я тебя узнал!\n\nУспехов в учёбе, {name}! 📚"
-        )
+    await update.message.reply_text(
+        f"✅ Имя обновлено: {old_name} → {name}"
+    )
     await _send_main_menu(context, update.effective_chat.id, user.id)
     return None
 
@@ -88,7 +87,6 @@ async def my_id(update, context):
 
 
 async def show_main_menu_only(update, context):
-    """Только для reply-кнопки «📋 Меню». НЕ вызывает start, НЕ проверяет display_name."""
     user_id = update.effective_user.id
     admin = await asyncio.to_thread(db.is_admin, user_id)
     text = await _greeting_text()
@@ -176,7 +174,7 @@ async def show_announcements(update, context):
     if not anns:
         text = "📭 Активных объявлений нет."
     else:
-        lines = ["   Активные объявления:\n"]
+        lines = ["📢 Активные объявления:\n"]
         for idx, (_, ann_text, created_at, is_note, photo_id) in enumerate(anns, start=1):
             date_part = created_at.split(" ")[0] if created_at else ""
             prefix = "📝 " if is_note else ("📎 " if photo_id else "")
@@ -211,7 +209,7 @@ async def show_extra_classes(update, context):
     if not items:
         await query.edit_message_text("📭 Нет активных дополнительных занятий.", reply_markup=kb.back_button())
         return
-    await query.edit_message_text("   Дополнительные занятия. Выберите:", reply_markup=kb.extra_classes_list_kb(items))
+    await query.edit_message_text("📚 Дополнительные занятия. Выберите:", reply_markup=kb.extra_classes_list_kb(items))
 
 
 async def extra_class_open(update, context):
@@ -278,11 +276,11 @@ async def show_bells_menu(update, context):
             logger.exception("del photo")
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
-            text="   Расписание звонков. Выберите тип дня:",
+            text="📞 Расписание звонков. Выберите тип дня:",
             reply_markup=kb.bells_choice_kb(),
         )
         return
-    await query.edit_message_text("   Расписание звонков. Выберите тип дня:", reply_markup=kb.bells_choice_kb())
+    await query.edit_message_text("📞 Расписание звонков. Выберите тип дня:", reply_markup=kb.bells_choice_kb())
 
 
 async def show_bells_regular(update, context):
@@ -334,7 +332,7 @@ async def show_bells_preholiday(update, context):
             try:
                 await query.edit_message_text("❌ Ошибка генерации.", reply_markup=kb.bells_choice_kb())
             except Exception:
-                pass
+                pass   # <--- ИСПРАВЛЕНО
             return
     else:
         data = cached

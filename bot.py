@@ -53,6 +53,21 @@ def build_conversations():
         CallbackQueryHandler(ha.back_to_admin_panel, pattern="^admin_panel$"),
     ]
 
+    # Диалог приветствия — принимает ЛЮБОЙ текст КРОМЕ «📋 Меню» и команд
+    conv_welcome = ConversationHandler(
+        entry_points=[CommandHandler("start", hu.start)],
+        states={
+            WELCOME_NAME: [
+                MessageHandler(
+                    filters.TEXT & ~filters.COMMAND & ~filters.Regex("^📋 Меню$"),
+                    hu.welcome_finish
+                ),
+            ],
+        },
+        fallbacks=[],
+        per_message=False,
+    )
+
     conv_add_hw = ConversationHandler(
         entry_points=[CallbackQueryHandler(ha.add_hw_start, pattern="^a_add_hw$")],
         states={
@@ -150,18 +165,6 @@ def build_conversations():
         per_message=False,
     )
 
-    # Диалог приветствия (ввод имени при первом старте)
-    conv_welcome = ConversationHandler(
-        entry_points=[CommandHandler("start", hu.start)],
-        states={
-            WELCOME_NAME: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, hu.welcome_finish),
-            ],
-        },
-        fallbacks=[],
-        per_message=False,
-    )
-
     return [
         conv_welcome,
         conv_add_hw, conv_add_ann, conv_add_replnote, conv_add_admin,
@@ -178,18 +181,17 @@ def main():
     _broadcast_bot = application.bot
     application.add_error_handler(error_handler)
 
-    # ConversationHandler'ы (включая /start → welcome)
     for conv in build_conversations():
         application.add_handler(conv)
 
-    # /myid    application.add_handler(CommandHandler("myid", hu.my_id))
+    application.add_handler(CommandHandler("myid", hu.my_id))
 
-    # Обработка удаления/блокировки бота пользователем
     application.add_handler(ChatMemberHandler(hu.on_user_blocked_bot, ChatMemberHandler.MY_CHAT_MEMBER))
 
-    # Reply-кнопка «📋 Меню»
+    # Кнопка «📋 Меню» — обработчик ПОСЛЕ ConversationHandler,
+    # и в conv_welcome добавлен ~filters.Regex("^📋 Меню$"), чтобы диалог её игнорил.
     application.add_handler(MessageHandler(
-        filters.Regex("^   Меню$") & ~filters.COMMAND, hu.show_main_menu_only
+        filters.Regex("^📋 Меню$") & ~filters.COMMAND, hu.show_main_menu_only
     ))
 
     # Пользовательская часть
@@ -201,11 +203,9 @@ def main():
     application.add_handler(CallbackQueryHandler(hu.extra_class_open, pattern="^open_extra_\\d+$"))
     application.add_handler(CallbackQueryHandler(hu.show_info, pattern="^menu_info$"))
 
-    # Личный кабинет
     application.add_handler(CallbackQueryHandler(hu.show_cabinet, pattern="^cabinet$"))
     application.add_handler(CallbackQueryHandler(hu.cabinet_toggle_notify, pattern="^toggle_(replacements|announcements|homework|extra_classes)$"))
 
-    # Звонки / расписание
     application.add_handler(CallbackQueryHandler(hu.show_bells_menu, pattern="^info_bells$"))
     application.add_handler(CallbackQueryHandler(hu.show_bells_regular, pattern="^bells_regular$"))
     application.add_handler(CallbackQueryHandler(hu.show_bells_preholiday, pattern="^bells_preholiday$"))
@@ -241,7 +241,6 @@ def main():
     application.add_handler(CallbackQueryHandler(ha.extra_del_confirm, pattern="^confirm_delextra_\\d+$"))
     application.add_handler(CallbackQueryHandler(ha.extra_view, pattern="^a_view_extra$"))
 
-    # Управление пользователями
     application.add_handler(CallbackQueryHandler(ha.users_menu, pattern="^users_menu$"))
     application.add_handler(CallbackQueryHandler(ha.view_users_list, pattern="^users_view$"))
     application.add_handler(CallbackQueryHandler(ha.view_admins_list, pattern="^admins_view$"))
