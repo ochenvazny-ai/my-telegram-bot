@@ -5,7 +5,7 @@ import asyncio
 import logging
 from datetime import datetime, timedelta
 from telegram.ext import (
- ContextTypes, ConversationHandler, MessageHandler, CallbackQueryHandler, filters,
+    ContextTypes, ConversationHandler, MessageHandler, CallbackQueryHandler, filters,
 )
 
 import database as db
@@ -18,6 +18,7 @@ from config import (
     REPLNOTE_TEXT, REPLNOTE_CONFIRM,
     SCHED_UPLOAD_TEXT, SCHED_FIELD_VALUE, ADMIN_ID, ADMIN_NAME,
     EXTRA_NAME, EXTRA_CONTENT, SET_GROUP, SET_BOT_NAME, SET_BOT_PHOTO,
+    SET_SUPPORT_USERNAME, SET_SUPPORT_LINK,
 )
 
 logger = logging.getLogger(__name__)
@@ -105,7 +106,11 @@ async def bot_settings_menu(update, context):
     await query.answer()
     if not await _require_admin(update):
         return
-    await query.edit_message_text("⚙️ Настройки бота:", reply_markup=kb.bot_settings_kb())
+    support_user = await asyncio.to_thread(db.get_support_username)
+    await query.edit_message_text(
+        f"⚙️ Настройки бота:\n\n👤 Юзер-админ для поддержки: @{support_user}",
+        reply_markup=kb.bot_settings_kb(),
+    )
 
 
 async def shift_menu(update, context):
@@ -332,7 +337,7 @@ async def del_ann_list(update, context):
         return
     anns = await asyncio.to_thread(db.get_active_announcements)
     if not anns:
-        await query.edit_message_text("   Нет.", reply_markup=kb.admin_panel_kb())
+        await query.edit_message_text("📭 Нет.", reply_markup=kb.admin_panel_kb())
         return
     lines = ["Удалить:\n"]
     for idx, item in enumerate(anns, start=1):
@@ -479,12 +484,13 @@ async def view_admins(update, context):
     await query.edit_message_text("\n".join(lines), reply_markup=kb.back_button("users_menu"))
 
 
+# === ПОЛЬЗОВАТЕЛИ / АДМИНЫ / ЗАБАНЕННЫЕ ===
 async def users_menu(update, context):
     query = update.callback_query
     await query.answer()
     if not await _require_admin(update):
         return
-    context.user_data['viewing_admins'] = False
+    context.user_data['viewing_banned'] = False
     await query.edit_message_text("👥 Пользователи:", reply_markup=kb.users_menu_kb())
 
 
@@ -493,8 +499,8 @@ async def view_users_list(update, context):
     await query.answer()
     if not await _require_admin(update):
         return
-    context.user_data['viewing_admins'] = False
-    users = await asyncio.to_thread(db.get_all_users_with_username)
+    context.user_data['viewing_banned'] = False
+    users = await asyncio.to_thread(db.get_all_active_users)
     if not users:
         await query.edit_message_text("📭 Нет.", reply_markup=kb.back_button("users_menu"))
         return
@@ -509,7 +515,7 @@ async def view_admins_list(update, context):
     await query.answer()
     if not await _require_admin(update):
         return
-    context.user_data['viewing_admins'] = True
+    context.user_data['viewing_banned'] = False
     admins = await asyncio.to_thread(db.get_all_admins)
     if not admins:
         await query.edit_message_text("📭 Нет админов.", reply_markup=kb.back_button("users_menu"))
@@ -521,21 +527,39 @@ async def view_admins_list(update, context):
     )
 
 
+async def view_banned_list(update, context):
+    query = update.callback_query
+    await query.answer()
+    if not await _require_admin(update):
+        return
+    context.user_data['viewing_banned'] = True
+    banned = await asyncio.to_thread(db.get_all_banned_users)
+    if not banned:
+        await query.edit_message_text("🚫 Забаненных нет.", reply_markup=kb.back_button("users_menu"))
+        return
+    # Формат: (id, username, first_name, display_name, created_at, banned_at)
+    rows = [(b[0], b[1], b[2], b[3], b[5]) for b in banned]
+    await query.edit_message_text(
+        f"🚫 Забаненные ({len(banned)}):\n\nНажми чтобы разбанить.",
+        reply_markup=kb.banned_paginated_kb(rows, page=0)
+    )
+
+
 async def users_paginated(update, context):
     query = update.callback_query
     await query.answer()
     if not await _require_admin(update):
         return
     page = int(query.data.split("_")[1])
-    if context.user_data.get('viewing_admins'):
-        admins = await asyncio.to_thread(db.get_all_admins)
-        admin_rows = [(a[0], a[1], None, a[2], "") for a in admins]
+    if context.user_data.get('viewing_banned'):
+        banned = await asyncio.to_thread(db.get_all_banned_users)
+        rows = [(b[0], b[1], b[2], b[3], b[5]) for b in banned]
         await query.edit_message_text(
-            f"👑 Админы (стр. {page + 1}):",
-            reply_markup=kb.admins_only_paginated_kb(admin_rows, page=page)
+            f"🚫 Забаненные (стр. {page + 1}):",
+            reply_markup=kb.banned_paginated_kb(rows, page=page)
         )
     else:
-        users = await asyncio.to_thread(db.get_all_users_with_username)
+        users = await asyncio.to_thread(db.get_all_active_users)
         await query.edit_message_text(
             f"👤 Пользователи (стр. {page + 1}):",
             reply_markup=kb.users_paginated_kb(users, page=page)
@@ -548,7 +572,7 @@ async def user_action_menu(update, context):
     if not await _require_admin(update):
         return
     target_id = int(query.data.split("_")[1])
-    users = await asyncio.to_thread(db.get_all_users_with_username)
+    users = await asyncio.to_thread(db.get_all_active_users)
     target = next((u for u in users if u[0] == target_id), None)
     if not target:
         await query.answer("❌ Не найден.", show_alert=True)
@@ -556,7 +580,7 @@ async def user_action_menu(update, context):
     is_admin_user = await asyncio.to_thread(db.is_admin, target_id)
     name = _pick_display_name(target)
     text = (
-        f"{'👑' if is_admin_user else '👤'} <b>{name}</b>\n"
+        f"{'  ' if is_admin_user else '👤'} <b>{name}</b>\n"
         f"Telegram: @{target[1] or '—'}\n"
         f"ID: {target_id}\n"
         f"Админ: {'✅' if is_admin_user else '❌'}\n"
@@ -582,12 +606,12 @@ async def user_toggle_admin(update, context):
         await asyncio.to_thread(db.remove_admin_by_user_id, target_id)
         await query.answer("✅ Снят с админа.", show_alert=True)
     else:
-        users = await asyncio.to_thread(db.get_all_users_with_username)
+        users = await asyncio.to_thread(db.get_all_active_users)
         target = next((u for u in users if u[0] == target_id), None)
         name = _pick_display_name(target) if target else "Пользователь"
         await asyncio.to_thread(db.add_admin_to_db, target_id, f"id{target_id}", name)
         await query.answer("✅ Назначен админом.", show_alert=True)
-    users = await asyncio.to_thread(db.get_all_users_with_username)
+    users = await asyncio.to_thread(db.get_all_active_users)
     target = next((u for u in users if u[0] == target_id), None)
     if not target:
         return
@@ -603,31 +627,53 @@ async def user_toggle_admin(update, context):
     await query.edit_message_text(text, parse_mode='HTML', reply_markup=kb.user_action_kb(target_id, is_admin_user))
 
 
-async def user_delete(update, context):
+async def user_ban(update, context):
     query = update.callback_query
     await query.answer()
     if not await _require_admin(update):
         return
     target_id = int(query.data.split("_")[1])
-    if target_id == update.effective_user.id:
-        await query.answer("❌ Нельзя себя.", show_alert=True)
-        return
     if target_id == INITIAL_ADMIN_ID:
         await query.answer("❌ Нельзя создателя.", show_alert=True)
         return
-    try:
-        with db.get_cursor(commit=True) as cur:
-            cur.execute("DELETE FROM users WHERE id = %s;", (target_id,))
-    except Exception:
-        logger.exception("delete user failed")
-        await query.answer("❌ Ошибка.", show_alert=True)
+    if target_id == update.effective_user.id:
+        await query.answer("❌ Нельзя себя.", show_alert=True)
         return
-    await query.answer("✅ Удалён.", show_alert=True)
-    users = await asyncio.to_thread(db.get_all_users_with_username)
+    await asyncio.to_thread(db.ban_user, target_id)
+    await query.answer("🚫 Забанен.", show_alert=True)
+    users = await asyncio.to_thread(db.get_all_active_users)
     await query.edit_message_text(
         f"👤 Пользователи ({len(users)}):",
         reply_markup=kb.users_paginated_kb(users, page=0)
     )
+
+
+async def user_unban(update, context):
+    query = update.callback_query
+    await query.answer()
+    if not await _require_admin(update):
+        return
+    target_id = int(query.data.split("_")[1])
+    context.user_data['pending_unban_id'] = target_id
+    # Достаём инфу
+    banned = await asyncio.to_thread(db.get_all_banned_users)
+    target = next((b for b in banned if b[0] == target_id), None)
+    name = _pick_display_name(target) if target else "Юзер"
+    await query.edit_message_text(
+        f"Разбанить {name} (ID: {target_id})?",
+        reply_markup=kb.confirm_kb("unbanuser", target_id)
+    )
+
+
+async def user_unban_confirm(update, context):
+    query = update.callback_query
+    await query.answer()
+    if not await _require_admin(update):
+        return
+    target_id = context.user_data.pop('pending_unban_id', None)
+    if target_id is not None:
+        await asyncio.to_thread(db.unban_user, target_id)
+    await query.edit_message_text("✅ Разбанен.", reply_markup=kb.admin_panel_kb())
 
 
 async def extra_add_start(update, context):
@@ -870,6 +916,65 @@ async def set_bot_photo_start(update, context):
 
 async def set_bot_photo_finish(update, context):
     await update.message.reply_text("⚠️ Сделайте вручную.")
+    context.user_data.clear()
+    await update.message.reply_text("👑 Админ-панель", reply_markup=kb.admin_panel_kb())
+    return ConversationHandler.END
+
+
+async def set_support_username_start(update, context):
+    query = update.callback_query
+    await query.answer()
+    if not await _require_admin(update):
+        return ConversationHandler.END
+    try:
+        await query.message.delete()
+    except Exception:
+        pass
+    current = await asyncio.to_thread(db.get_support_username)
+    await context.bot.send_message(
+        chat_id=update.effective_chat.id,
+        text=f"Текущий юзернейм поддержки: <b>@{current}</b>\n\nВведите новый (без @):",
+        parse_mode='HTML',
+        reply_markup=kb.cancel_button(),
+    )
+    return SET_SUPPORT_USERNAME
+
+
+async def set_support_username_finish(update, context):
+    name = update.message.text.strip().lstrip("@")
+    await asyncio.to_thread(db.set_support_username, name)
+    await update.message.reply_text(f"✅ Юзернейм поддержки: @{name}")
+    context.user_data.clear()
+    await update.message.reply_text("👑 Админ-панель", reply_markup=kb.admin_panel_kb())
+    return ConversationHandler.END
+
+
+async def set_support_link_start(update, context):
+    query = update.callback_query
+    await query.answer()
+    if not await _require_admin(update):
+        return ConversationHandler.END
+    try:
+        await query.message.delete()
+    except Exception:
+        pass
+    current = await asyncio.to_thread(db.get_support_link)
+    await context.bot.send_message(
+        chat_id=update.effective_chat.id,
+        text=f"Текущая ссылка: <b>{current}</b>\n\nВведите новую (https://t.me/...):",
+        parse_mode='HTML',
+        reply_markup=kb.cancel_button(),
+    )
+    return SET_SUPPORT_LINK
+
+
+async def set_support_link_finish(update, context):
+    link = update.message.text.strip()
+    if not link.startswith("http"):
+        await update.message.reply_text("❌ Ссылка должна начинаться с http(s)://")
+        return SET_SUPPORT_LINK
+    await asyncio.to_thread(db.set_support_link, link)
+    await update.message.reply_text(f"✅ Ссылка: {link}")
     context.user_data.clear()
     await update.message.reply_text("👑 Админ-панель", reply_markup=kb.admin_panel_kb())
     return ConversationHandler.END

@@ -28,8 +28,14 @@ def get_cursor(commit=False):
 
 
 def upsert_user(user_id, username=None, first_name=None):
+    """Создаёт/обновляет юзера. Если забанен — НЕ перезаписывает, чтобы не вернуть случайно."""
     try:
         with get_cursor(commit=True) as cur:
+            # Проверяем бан-статус
+            cur.execute("SELECT is_banned FROM users WHERE id = %s;", (user_id,))
+            row = cur.fetchone()
+            if row and row.get("is_banned"):
+                return  # Забаненный, не трогаем
             cur.execute("""
                 INSERT INTO users (id, username, first_name, created_at)
                 VALUES (%s, %s, %s, NOW())
@@ -61,20 +67,52 @@ def get_user_display_name(user_id):
         return None
 
 
-def delete_user_by_id(user_id):
+def is_user_banned(user_id):
     try:
-        with get_cursor(commit=True) as cur:
-            cur.execute("DELETE FROM users WHERE id = %s;", (user_id,))
-            return True
+        with get_cursor() as cur:
+            cur.execute("SELECT is_banned FROM users WHERE id = %s;", (user_id,))
+            row = cur.fetchone()
+            return bool(row and row.get("is_banned"))
     except Exception:
-        logger.exception("delete_user_by_id failed")
         return False
 
 
+def ban_user(user_id):
+    try:
+        with get_cursor(commit=True) as cur:
+            cur.execute(
+                "UPDATE users SET is_banned = true, banned_at = NOW() WHERE id = %s;",
+                (user_id,),
+            )
+            return True
+    except Exception:
+        logger.exception("ban_user failed")
+        return False
+
+
+def unban_user(user_id):
+    try:
+        with get_cursor(commit=True) as cur:
+            cur.execute(
+                "UPDATE users SET is_banned = false, banned_at = NULL WHERE id = %s;",
+                (user_id,),
+            )
+            return True
+    except Exception:
+        logger.exception("unban_user failed")
+        return False
+
+
+def delete_user_by_id(user_id):
+    """Алиас для совместимости — теперь не удаляет, а банит."""
+    return ban_user(user_id)
+
+
 def get_all_user_ids():
+    """Только НЕ забаненные."""
     try:
         with get_cursor() as cur:
-            cur.execute("SELECT id FROM users;")
+            cur.execute("SELECT id FROM users WHERE is_banned = false OR is_banned IS NULL;")
             return [row["id"] for row in cur.fetchall()]
     except Exception:
         logger.exception("get_all_user_ids failed")
@@ -82,9 +120,14 @@ def get_all_user_ids():
 
 
 def is_admin(user_id):
+    """Только не забаненные."""
     try:
         with get_cursor() as cur:
-            cur.execute("SELECT 1 FROM admins WHERE user_id = %s;", (user_id,))
+            cur.execute(
+                "SELECT 1 FROM admins WHERE user_id = %s "
+                "AND NOT EXISTS (SELECT 1 FROM users u WHERE u.id = admins.user_id AND u.is_banned = true);",
+                (user_id,),
+            )
             return cur.fetchone() is not None
     except Exception:
         logger.exception("is_admin failed")
@@ -216,7 +259,7 @@ DEFAULT_PAIRS_DEN = 3
 def init_default_schedule():
     try:
         with get_cursor(commit=True) as cur:
-            cur.execute("SELECT 1 FROM schedule LIMIT 1;")
+            cur.execute("SELECT1 FROM schedule LIMIT 1;")
             if cur.fetchone():
                 return
             for day in range(6):
@@ -386,6 +429,22 @@ def set_bot_display_name(name):
     return set_setting("bot_display_name", name)
 
 
+def get_support_username():
+    return get_setting("support_username", "admin")
+
+
+def set_support_username(username):
+    return set_setting("support_username", username)
+
+
+def get_support_link():
+    return get_setting("support_link", "https://t.me/admin")
+
+
+def set_support_link(link):
+    return set_setting("support_link", link)
+
+
 def get_last_replacements_date():
     return get_setting("last_replacements_date", "")
 
@@ -477,7 +536,7 @@ def get_user_settings_row(user_id):
     try:
         with get_cursor() as cur:
             cur.execute(
-                "SELECT id, username, first_name, display_name, "
+                "SELECT id, username, first_name, display_name, is_banned, "
                 "notify_replacements, notify_announcements, notify_homework, notify_extra_classes "
                 "FROM users WHERE id = %s;",
                 (user_id,),
@@ -510,20 +569,43 @@ def set_user_notify(user_id, kind, enabled):
         return False
 
 
-def get_all_users_with_username():
+def get_all_active_users():
+    """Не забаненные пользователи (для отображения в админке)."""
     try:
         with get_cursor() as cur:
             cur.execute(
-                "SELECT id, username, first_name, display_name, created_at FROM users ORDER BY created_at DESC;"
+                "SELECT id, username, first_name, display_name, created_at FROM users "
+                "WHERE is_banned = false OR is_banned IS NULL ORDER BY created_at DESC;"
             )
             return [(r["id"], r["username"], r["first_name"], r["display_name"], str(r["created_at"]))
                     for r in cur.fetchall()]
     except Exception:
-        logger.exception("get_all_users_with_username failed")
+        logger.exception("get_all_active_users failed")
         return []
 
 
+def get_all_banned_users():
+    """Забаненные пользователи."""
+    try:
+        with get_cursor() as cur:
+            cur.execute(
+                "SELECT id, username, first_name, display_name, created_at, banned_at FROM users "
+                "WHERE is_banned = true ORDER BY banned_at DESC;"
+            )
+            return [(r["id"], r["username"], r["first_name"], r["display_name"], str(r["created_at"]), str(r["banned_at"]))
+                    for r in cur.fetchall()]
+    except Exception:
+        logger.exception("get_all_banned_users failed")
+        return []
+
+
+def get_all_users_with_username():
+    """Алиас для совместимости — теперь только активные."""
+    return get_all_active_users()
+
+
 def get_user_ids_with_notify(kind):
+    """Только НЕ забаненные."""
     col_map = {
         "replacements": "notify_replacements",
         "announcements": "notify_announcements",
@@ -535,7 +617,10 @@ def get_user_ids_with_notify(kind):
         return []
     try:
         with get_cursor() as cur:
-            cur.execute(f"SELECT id FROM users WHERE {col} = true;")
+            cur.execute(
+                f"SELECT id FROM users WHERE {col} = true "
+                f"AND (is_banned = false OR is_banned IS NULL);"
+            )
             return [row["id"] for row in cur.fetchall()]
     except Exception:
         logger.exception("get_user_ids_with_notify failed")

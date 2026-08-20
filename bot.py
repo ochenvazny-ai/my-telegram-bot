@@ -16,7 +16,8 @@ import schedule_image as sched_img
 from config import (
     BOT_TOKEN, HW_TEXT, HW_DUE, ANN_TEXT, ANN_PHOTO, ANN_CONFIRM,
     REPLNOTE_TEXT, REPLNOTE_CONFIRM, SCHED_UPLOAD_TEXT, SCHED_FIELD_VALUE,
-    ADMIN_ID, ADMIN_NAME, EXTRA_NAME, EXTRA_CONTENT, SET_GROUP, SET_BOT_NAME, SET_BOT_PHOTO,
+    ADMIN_ID, ADMIN_NAME, EXTRA_NAME, EXTRA_CONTENT,
+    SET_GROUP, SET_BOT_NAME, SET_BOT_PHOTO, SET_SUPPORT_USERNAME, SET_SUPPORT_LINK,
 )
 from handlers_user import WELCOME_NAME
 
@@ -53,7 +54,6 @@ def build_conversations():
         CallbackQueryHandler(ha.back_to_admin_panel, pattern="^admin_panel$"),
     ]
 
-    # Welcome: ловим /start, ждём имя (любой текст кроме «📋 Меню» и команд)
     conv_welcome = ConversationHandler(
         entry_points=[CommandHandler("start", hu.start)],
         states={
@@ -165,11 +165,26 @@ def build_conversations():
         per_message=False,
     )
 
+    conv_set_support_username = ConversationHandler(
+        entry_points=[CallbackQueryHandler(ha.set_support_username_start, pattern="^a_set_support_username$")],
+        states={SET_SUPPORT_USERNAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, ha.set_support_username_finish)]},
+        fallbacks=fallback,
+        per_message=False,
+    )
+
+    conv_set_support_link = ConversationHandler(
+        entry_points=[CallbackQueryHandler(ha.set_support_link_start, pattern="^a_set_support_link$")],
+        states={SET_SUPPORT_LINK: [MessageHandler(filters.TEXT & ~filters.COMMAND, ha.set_support_link_finish)]},
+        fallbacks=fallback,
+        per_message=False,
+    )
+
     return [
         conv_welcome,
         conv_add_hw, conv_add_ann, conv_add_replnote, conv_add_admin,
         conv_sched_upload, conv_sched_field,
         conv_extra_add, conv_set_group, conv_set_bot_name, conv_set_bot_photo,
+        conv_set_support_username, conv_set_support_link,
     ]
 
 
@@ -185,15 +200,12 @@ def main():
         application.add_handler(conv)
 
     application.add_handler(CommandHandler("myid", hu.my_id))
-
     application.add_handler(ChatMemberHandler(hu.on_user_blocked_bot, ChatMemberHandler.MY_CHAT_MEMBER))
 
-    # Reply-кнопка «📋 Меню» — обычный хендлер, фильтр уже исключён в conv_welcome
     application.add_handler(MessageHandler(
         filters.Regex("^📋 Меню$") & ~filters.COMMAND, hu.show_main_menu_only
     ))
 
-    # Пользовательская часть
     application.add_handler(CallbackQueryHandler(hu.main_menu_callback, pattern="^main_menu$"))
     application.add_handler(CallbackQueryHandler(hu.show_schedule, pattern="^menu_zam$"))
     application.add_handler(CallbackQueryHandler(hu.show_hw, pattern="^menu_hw$"))
@@ -211,7 +223,6 @@ def main():
     application.add_handler(CallbackQueryHandler(hu.show_sched_img_menu, pattern="^info_sched_img$"))
     application.add_handler(CallbackQueryHandler(hu.send_schedule_image, pattern="^schedimg_(num|den|cmp)$"))
 
-    # Админка
     application.add_handler(CallbackQueryHandler(ha.admin_panel_entry, pattern="^admin_panel$"))
     application.add_handler(CallbackQueryHandler(ha.shift_menu, pattern="^a_shift$"))
     application.add_handler(CallbackQueryHandler(ha.shift_set, pattern="^shiftset_(1|2)$"))
@@ -243,10 +254,13 @@ def main():
     application.add_handler(CallbackQueryHandler(ha.users_menu, pattern="^users_menu$"))
     application.add_handler(CallbackQueryHandler(ha.view_users_list, pattern="^users_view$"))
     application.add_handler(CallbackQueryHandler(ha.view_admins_list, pattern="^admins_view$"))
+    application.add_handler(CallbackQueryHandler(ha.view_banned_list, pattern="^banned_view$"))
     application.add_handler(CallbackQueryHandler(ha.users_paginated, pattern="^userspage_\\d+$"))
     application.add_handler(CallbackQueryHandler(ha.user_action_menu, pattern="^useraction_\\d+$"))
     application.add_handler(CallbackQueryHandler(ha.user_toggle_admin, pattern="^toggleadmin_\\d+$"))
-    application.add_handler(CallbackQueryHandler(ha.user_delete, pattern="^deleteuser_\\d+$"))
+    application.add_handler(CallbackQueryHandler(ha.user_ban, pattern="^banuser_\\d+$"))
+    application.add_handler(CallbackQueryHandler(ha.user_unban, pattern="^unbanuser_\\d+$"))
+    application.add_handler(CallbackQueryHandler(ha.user_unban_confirm, pattern="^confirm_unbanuser_\\d+$"))
 
     application.add_handler(CallbackQueryHandler(ha.edit_schedule_menu, pattern="^a_sched_menu$"))
     application.add_handler(CallbackQueryHandler(ha.force_broadcast_replacements_btn, pattern="^force_repl_broadcast$"))
