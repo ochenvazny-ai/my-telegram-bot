@@ -25,8 +25,6 @@ logger = logging.getLogger(__name__)
 
 
 def _pick_display_name(user_tuple):
-    """Выбирает имя из кортежа пользователя: display_name > first_name > username."""
-    # user_tuple формат (id, username, first_name, display_name, created_at)
     if len(user_tuple) >= 4 and user_tuple[3]:
         return user_tuple[3]
     if len(user_tuple) >= 3 and user_tuple[2]:
@@ -92,7 +90,7 @@ async def admins_menu(update, context):
     await query.answer()
     if not await _require_admin(update):
         return
-    await query.edit_message_text("👑 Админы:", reply_markup=kb.admins_menu_kb())
+    await query.edit_message_text("   Админы:", reply_markup=kb.admins_menu_kb())
 
 
 async def extra_menu(update, context):
@@ -132,7 +130,6 @@ async def shift_set(update, context):
     await query.edit_message_text(f"✅ Смена изменена на {shift} смену.", reply_markup=kb.admin_panel_kb())
 
 
-# === ДЗ ===
 async def add_hw_start(update, context):
     query = update.callback_query
     await query.answer()
@@ -145,7 +142,7 @@ async def add_hw_start(update, context):
 async def add_hw_text(update, context):
     context.user_data['task_text'] = update.message.text.strip()
     await update.message.reply_text(
-        "📅 Введите срок сдачи или '-' без срока:", reply_markup=kb.cancel_button()
+        "   Введите срок сдачи или '-' без срока:", reply_markup=kb.cancel_button()
     )
     return HW_DUE
 
@@ -180,7 +177,7 @@ async def broadcast_hw_to_subscribers(update, context):
     last_task = tasks[-1]
     _, task_text, due_date, _ = last_task
     due_str = f"\n(срок: {due_date})" if due_date else ""
-    msg = f"📚<b>Обновлено ДЗ</b>\n\n{task_text}{due_str}"
+    msg = f"  <b>Обновлено ДЗ</b>\n\n{task_text}{due_str}"
     await query.edit_message_text("⏳ Рассылаю...")
     sent = 0
     failed = 0
@@ -202,7 +199,7 @@ async def del_hw_list(update, context):
         return
     tasks = await asyncio.to_thread(db.get_all_tasks_db)
     if not tasks:
-        await query.edit_message_text("📭 Нет ДЗ.", reply_markup=kb.admin_panel_kb())
+        await query.edit_message_text("   Нет ДЗ.", reply_markup=kb.admin_panel_kb())
         return
     lines = ["Удалить ДЗ:\n"]
     for idx, (_, task, due_date, _) in enumerate(tasks, start=1):
@@ -232,7 +229,6 @@ async def del_hw_confirm(update, context):
     await query.edit_message_text("🗑 Удалено.", reply_markup=kb.admin_panel_kb())
 
 
-# === ОБЪЯВЛЕНИЯ ===
 async def add_ann_start(update, context):
     query = update.callback_query
     await query.answer()
@@ -321,7 +317,7 @@ async def add_ann_confirm(update, context):
         if photo_id:
             broadcast_text += "\n\n📎 Вложение"
         await query.edit_message_text("⏳ Рассылаю...")
- sent, failed = await _broadcast_to_kind(context.bot, "announcements", broadcast_text)
+        sent, failed = await _broadcast_to_kind(context.bot, "announcements", broadcast_text)
         await query.message.reply_text(f"✅ Разослано {sent}. ❌ Не доставлено {failed}.")
     else:
         await query.edit_message_text("✅ Сохранено.")
@@ -337,12 +333,12 @@ async def del_ann_list(update, context):
         return
     anns = await asyncio.to_thread(db.get_active_announcements)
     if not anns:
-        await query.edit_message_text("📭 Нет.", reply_markup=kb.admin_panel_kb())
+        await query.edit_message_text("   Нет.", reply_markup=kb.admin_panel_kb())
         return
     lines = ["Удалить:\n"]
     for idx, item in enumerate(anns, start=1):
         ann_id, text, created_at, is_note, photo_id = item
-        prefix = "📝 " if is_note else ("📎 " if photo_id else "")
+        prefix = "   " if is_note else ("📎 " if photo_id else "")
         date_part = created_at.split(" ")[0] if created_at else ""
         short = text[:28] + "..." if len(text) > 28 else text
         lines.append(f"{idx}️⃣ {prefix}{date_part}: {short or '(без текста)'}")
@@ -400,7 +396,6 @@ async def add_replnote_confirm(update, context):
     return ConversationHandler.END
 
 
-# === АДМИНЫ ===
 async def add_admin_start(update, context):
     query = update.callback_query
     await query.answer()
@@ -477,7 +472,7 @@ async def view_admins(update, context):
         return
     admins = await asyncio.to_thread(db.get_all_admins)
     if not admins:
-        await query.edit_message_text("📭 Пусто.", reply_markup=kb.back_button("users_menu"))
+        await query.edit_message_text("   Пусто.", reply_markup=kb.back_button("users_menu"))
         return
     lines = ["Админы:\n"]
     for idx, (user_id, username, name) in enumerate(admins, start=1):
@@ -485,7 +480,6 @@ async def view_admins(update, context):
     await query.edit_message_text("\n".join(lines), reply_markup=kb.back_button("users_menu"))
 
 
-# === УПРАВЛЕНИЕ ПОЛЬЗОВАТЕЛЯМИ ===
 async def users_menu(update, context):
     query = update.callback_query
     await query.answer()
@@ -503,7 +497,7 @@ async def view_users_list(update, context):
     context.user_data['viewing_admins'] = False
     users = await asyncio.to_thread(db.get_all_users_with_username)
     if not users:
-        await query.edit_message_text("📭 Нет.", reply_markup=kb.back_button("users_menu"))
+        await query.edit_message_text("   Нет.", reply_markup=kb.back_button("users_menu"))
         return
     await query.edit_message_text(
         f"👤 Пользователи ({len(users)}):\n\nНажми на юзера для действий.",
@@ -521,7 +515,6 @@ async def view_admins_list(update, context):
     if not admins:
         await query.edit_message_text("📭 Нет админов.", reply_markup=kb.back_button("users_menu"))
         return
-    # Преобразуем (user_id, username, name) в формат для admins_only_paginated_kb (id, username, first_name, display_name, created_at)
     admin_rows = [(a[0], a[1], None, a[2], "") for a in admins]
     await query.edit_message_text(
         f"👑 Админы ({len(admins)}):\n\nНажми на админа для действий.",
@@ -539,7 +532,7 @@ async def users_paginated(update, context):
         admins = await asyncio.to_thread(db.get_all_admins)
         admin_rows = [(a[0], a[1], None, a[2], "") for a in admins]
         await query.edit_message_text(
-            f"👑 Админы (стр. {page + 1}):",
+            f"   Админы (стр. {page + 1}):",
             reply_markup=kb.admins_only_paginated_kb(admin_rows, page=page)
         )
     else:
@@ -602,7 +595,7 @@ async def user_toggle_admin(update, context):
     is_admin_user = await asyncio.to_thread(db.is_admin, target_id)
     name = _pick_display_name(target)
     text = (
-        f"{'👑' if is_admin_user else '👤'} <b>{name}</b>\n"
+        f"{'  ' if is_admin_user else '👤'} <b>{name}</b>\n"
         f"Telegram: @{target[1] or '—'}\n"
         f"ID: {target_id}\n"
         f"Админ: {'✅' if is_admin_user else '❌'}\n"
@@ -638,7 +631,6 @@ async def user_delete(update, context):
     )
 
 
-# === ДОП. ЗАНЯТИЯ ===
 async def extra_add_start(update, context):
     query = update.callback_query
     await query.answer()
@@ -704,7 +696,7 @@ async def extra_del_list(update, context):
         return
     items = await asyncio.to_thread(db.get_active_extra_classes)
     if not items:
-        await query.edit_message_text("📭 Нет.", reply_markup=kb.back_button("a_extra_menu"))
+        await query.edit_message_text("   Нет.", reply_markup=kb.back_button("a_extra_menu"))
         return
     await query.edit_message_text("Удалить:", reply_markup=kb.extra_delete_kb(items))
 
@@ -741,7 +733,7 @@ async def extra_view(update, context):
         return
     items = await asyncio.to_thread(db.get_active_extra_classes)
     if not items:
-        await query.edit_message_text("📭 Нет.", reply_markup=kb.back_button("a_extra_menu"))
+        await query.edit_message_text("   Нет.", reply_markup=kb.back_button("a_extra_menu"))
         return
     lines = ["Активные:\n"]
     for idx, (item_id, subject, description, photo_id, created_at) in enumerate(items, start=1):
@@ -772,9 +764,9 @@ async def broadcast_extra_class(update, context):
     for uid in user_ids:
         try:
             if photo_id:
-                await context.bot.send_photo(chat_id=uid, photo=photo_id, caption=f"📚 Новое: <b>{subject}</b>", parse_mode='HTML')
+                await context.bot.send_photo(chat_id=uid, photo=photo_id, caption=f"   Новое: <b>{subject}</b>", parse_mode='HTML')
             else:
-                body = f"📚 Новое: <b>{subject}</b>"
+                body = f"   Новое: <b>{subject}</b>"
                 if description:
                     body += f"\n\n{description}"
                 await context.bot.send_message(chat_id=uid, text=body, parse_mode='HTML')
@@ -786,7 +778,6 @@ async def broadcast_extra_class(update, context):
     await context.bot.send_message(chat_id=update.effective_chat.id, text="👑 Админ-панель", reply_markup=kb.admin_panel_kb())
 
 
-# === НАСТРОЙКИ БОТА ===
 async def set_group_start(update, context):
     query = update.callback_query
     await query.answer()
@@ -885,7 +876,6 @@ async def set_bot_photo_finish(update, context):
     return ConversationHandler.END
 
 
-# === РАСПИСАНИЕ ===
 async def edit_schedule_menu(update, context):
     query = update.callback_query
     await query.answer()
