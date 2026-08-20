@@ -331,7 +331,7 @@ async def show_bells_preholiday(update, context):
             try:
                 await query.edit_message_text("❌ Ошибка генерации.", reply_markup=kb.bells_choice_kb())
             except Exception:
- pass
+                pass   # <--- ИСПРАВЛЕНО: теперь pass имеет правильный отступ
             return
     else:
         data = cached
