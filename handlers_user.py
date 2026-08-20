@@ -18,7 +18,7 @@ INFO_TEXT = (
     "📅 Замены — замены на день, указанный на сайте колледжа.\n"
     "📚 Домашка — список актуальных домашних заданий.\n"
     "📢 Объявления — активные объявления от администрации.\n"
-    "📚 Доп. занятия — дополнительные занятия с расписанием.\n"
+    "   Доп. занятия — дополнительные занятия с расписанием.\n"
     "🔔 Уведомления — настройка уведомлений.\n"
     "ℹ️ Учебная инфа — расписание звонков и расписание пар.\n\n"
     "Успехов в учёбе! 📚"
@@ -184,7 +184,7 @@ async def show_announcements(update, context):
         lines = ["   Активные объявления:\n"]
         for idx, (_, ann_text, created_at, is_note, photo_id) in enumerate(anns, start=1):
             date_part = created_at.split(" ")[0] if created_at else ""
-            prefix = "📝 " if is_note else ("📎 " if photo_id else "")
+            prefix = "   " if is_note else ("📎 " if photo_id else "")
             body = ann_text if ann_text else "(без текста — только вложение)"
             lines.append(f"{idx}️⃣ {prefix}{date_part}: {body}")
         text = "\n".join(lines)
@@ -209,14 +209,14 @@ async def show_extra_classes(update, context):
             return
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
-            text="📚 Дополнительные занятия. Выберите:",
+            text="   Дополнительные занятия. Выберите:",
             reply_markup=kb.extra_classes_list_kb(items),
         )
         return
     if not items:
         await query.edit_message_text("📭 Нет активных дополнительных занятий.", reply_markup=kb.back_button())
         return
-    await query.edit_message_text("📚 Дополнительные занятия. Выберите:", reply_markup=kb.extra_classes_list_kb(items))
+    await query.edit_message_text("   Дополнительные занятия. Выберите:", reply_markup=kb.extra_classes_list_kb(items))
 
 
 async def extra_class_open(update, context):
@@ -287,7 +287,7 @@ async def show_bells_menu(update, context):
             reply_markup=kb.bells_choice_kb(),
         )
         return
-    await query.edit_message_text("📞 Расписание звонков. Выберите тип дня:", reply_markup=kb.bells_choice_kb())
+    await query.edit_message_text("   Расписание звонков. Выберите тип дня:", reply_markup=kb.bells_choice_kb())
 
 
 async def show_bells_regular(update, context):
@@ -419,7 +419,7 @@ async def _render_cabinet_text_and_kb(user_id):
     hw = "✅ Вкл" if s.get("notify_homework") else "❌ Выкл"
     ec = "✅ Вкл" if s.get("notify_extra_classes") else "❌ Выкл"
     text = (
-        f"🔔 <b>Уведомления</b>\n\n"
+        f"   <b>Уведомления</b>\n\n"
         f"Привет, <b>{name}</b>!\n\n"
         f"Нажми на категорию, чтобы включить или выключить:\n\n"
         f"📅 Замены: {repl}\n"
@@ -427,7 +427,10 @@ async def _render_cabinet_text_and_kb(user_id):
         f"📚 Домашка: {hw}\n"
         f"📖 Доп. занятия: {ec}"
     )
-    return textasync def show_cabinet(update, context):
+    return text
+
+
+async def show_cabinet(update, context):
     query = update.callback_query
     await query.answer()
     user_id = update.effective_user.id
@@ -438,7 +441,7 @@ async def _render_cabinet_text_and_kb(user_id):
 async def cabinet_toggle_notify(update, context):
     query = update.callback_query
     await query.answer()
-    kind = query.data.split("_",1)[1]
+    kind = query.data.split("_", 1)[1]
     user_id = update.effective_user.id
 
     kind_label_map = {
