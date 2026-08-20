@@ -35,7 +35,7 @@ WELCOME_TEXT = (
 )
 
 
-def _ban_text():
+def _ban_text_sync():
     username = db.get_support_username()
     link = db.get_support_link()
     return (
@@ -58,13 +58,32 @@ async def _send_main_menu(context, chat_id, user_id):
     )
 
 
-async def _check_banned(update, context):
-    """Если юзер забанен — отвечает бан-сообщением и возвращает True."""
+async def _is_banned(user_id):
+    return await asyncio.to_thread(db.is_user_banned, user_id)
+
+
+async def _check_banned_message(update, context):
+    """Для текстовых сообщений. Отвечает бан-сообщением, возвращает True если забанен."""
     user_id = update.effective_user.id
-    is_banned = await asyncio.to_thread(db.is_user_banned, user_id)
-    if is_banned:
+    if await _is_banned(user_id):
         try:
-            await update.message.reply_text(_ban_text(), parse_mode='HTML')
+            await update.message.reply_text(_ban_text_sync(), parse_mode='HTML')
+        except Exception:
+            pass
+        return True
+    return False
+
+
+async def _check_banned_callback(update, context):
+    """Для callback-кнопок. Показывает бан-алерт."""
+    user_id = update.effective_user.id
+    if await _is_banned(user_id):
+        query = update.callback_query
+        try:
+            await query.answer(
+                "Ваш аккаунт забанен. Обратитесь к администрации.",
+                show_alert=True,
+            )
         except Exception:
             pass
         return True
@@ -72,7 +91,7 @@ async def _check_banned(update, context):
 
 
 async def start(update, context):
-    if await _check_banned(update, context):
+    if await _check_banned_message(update, context):
         return ConversationHandler.END
     user = update.effective_user
     await asyncio.to_thread(db.upsert_user, user.id, user.username, user.first_name)
@@ -84,29 +103,27 @@ async def start(update, context):
 
 
 async def welcome_finish(update, context):
-    if await _check_banned(update, context):
+    if await _check_banned_message(update, context):
         return ConversationHandler.END
     name = (update.message.text or "").strip()
     user = update.effective_user
     if not name:
         await update.message.reply_text("Имя не может быть пустым. Введи, пожалуйста, своё имя:")
         return 0
-
     await asyncio.to_thread(db.set_user_display_name, user.id, name)
-    # ВСЕГДА одно сообщение — «Я тебя узнал»
-    await update.message.reply_text(f"✅ Отлично, я тебя узнал!\n\nУспехов в учёбе, {name}! 📚")
+    await update.message.reply_text(f"✅ Отлично, я тебя узнал!\n\nУспехов в учёбе, {name}!   ")
     await _send_main_menu(context, update.effective_chat.id, user.id)
     return ConversationHandler.END
 
 
 async def my_id(update, context):
-    if await _check_banned(update, context):
+    if await _check_banned_message(update, context):
         return
     await update.message.reply_text(f"🆔 Ваш ID: `{update.effective_user.id}`", parse_mode='Markdown')
 
 
 async def show_main_menu_only(update, context):
-    if await _check_banned(update, context):
+    if await _check_banned_message(update, context):
         return
     user_id = update.effective_user.id
     admin = await asyncio.to_thread(db.is_admin, user_id)
@@ -118,7 +135,6 @@ async def show_main_menu_only(update, context):
 
 
 async def on_user_blocked_bot(update, context):
-    """Когда юзер блокирует бота — баним его."""
     try:
         result = update.my_chat_member
         if not result:
@@ -132,7 +148,7 @@ async def on_user_blocked_bot(update, context):
 
 
 async def main_menu_callback(update, context):
-    if await _check_banned_callback(update):
+    if await _check_banned_callback(update, context):
         return
     query = update.callback_query
     await query.answer()
@@ -151,22 +167,8 @@ async def main_menu_callback(update, context):
         )
 
 
-async def _check_banned_callback(update):
-    """Проверка бана для callback-кнопок."""
-    user_id = update.effective_user.id
-    is_banned = await asyncio.to_thread(db.is_user_banned, user_id)
-    if is_banned:
-        query = update.callback_query
-        try:
-            await query.answer(_ban_text().replace("<b>", "").replace("</b>", "").replace("<a href=\"{link}\">{username}</a>", "support"), show_alert=True)
-        except Exception:
-            pass
-        return True
-    return False
-
-
 async def show_schedule(update, context):
-    if await _check_banned_callback(update):
+    if await _check_banned_callback(update, context):
         return
     query = update.callback_query
     await query.answer()
@@ -191,7 +193,7 @@ async def show_schedule(update, context):
 
 
 async def show_hw(update, context):
-    if await _check_banned_callback(update):
+    if await _check_banned_callback(update, context):
         return
     query = update.callback_query
     await query.answer()
@@ -209,7 +211,7 @@ async def show_hw(update, context):
 
 
 async def show_announcements(update, context):
-    if await _check_banned_callback(update):
+    if await _check_banned_callback(update, context):
         return
     query = update.callback_query
     await query.answer()
@@ -217,10 +219,10 @@ async def show_announcements(update, context):
     if not anns:
         text = "📭 Активных объявлений нет."
     else:
-        lines = ["📢 Активные объявления:\n"]
+        lines = ["   Активные объявления:\n"]
         for idx, (_, ann_text, created_at, is_note, photo_id) in enumerate(anns, start=1):
             date_part = created_at.split(" ")[0] if created_at else ""
-            prefix = "📝 " if is_note else ("📎 " if photo_id else "")
+            prefix = "   " if is_note else ("📎 " if photo_id else "")
             body = ann_text if ann_text else "(без текста — только вложение)"
             lines.append(f"{idx}️⃣ {prefix}{date_part}: {body}")
         text = "\n".join(lines)
@@ -228,7 +230,7 @@ async def show_announcements(update, context):
 
 
 async def show_extra_classes(update, context):
-    if await _check_banned_callback(update):
+    if await _check_banned_callback(update, context):
         return
     query = update.callback_query
     await query.answer()
@@ -247,18 +249,18 @@ async def show_extra_classes(update, context):
             return
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
-            text="📚 Дополнительные занятия. Выберите:",
+            text="   Дополнительные занятия. Выберите:",
             reply_markup=kb.extra_classes_list_kb(items),
         )
         return
     if not items:
         await query.edit_message_text("📭 Нет активных дополнительных занятий.", reply_markup=kb.back_button())
         return
-    await query.edit_message_text("📚 Дополнительные занятия. Выберите:", reply_markup=kb.extra_classes_list_kb(items))
+    await query.edit_message_text("   Дополнительные занятия. Выберите:", reply_markup=kb.extra_classes_list_kb(items))
 
 
 async def extra_class_open(update, context):
-    if await _check_banned_callback(update):
+    if await _check_banned_callback(update, context):
         return
     query = update.callback_query
     await query.answer()
@@ -297,7 +299,7 @@ async def extra_class_open(update, context):
 
 
 async def show_info(update, context):
-    if await _check_banned_callback(update):
+    if await _check_banned_callback(update, context):
         return
     query = update.callback_query
     await query.answer()
@@ -316,7 +318,7 @@ async def show_info(update, context):
 
 
 async def show_bells_menu(update, context):
-    if await _check_banned_callback(update):
+    if await _check_banned_callback(update, context):
         return
     query = update.callback_query
     await query.answer()
@@ -335,7 +337,7 @@ async def show_bells_menu(update, context):
 
 
 async def show_bells_regular(update, context):
-    if await _check_banned_callback(update):
+    if await _check_banned_callback(update, context):
         return
     query = update.callback_query
     await query.answer()
@@ -355,7 +357,8 @@ async def show_bells_regular(update, context):
                 await query.edit_message_text("❌ Ошибка генерации.", reply_markup=kb.bells_choice_kb())
             except Exception:
                 pass
-            return else:
+            return
+    else:
         data = cached
     await context.bot.send_photo(
         chat_id=update.effective_chat.id, photo=io.BytesIO(data), reply_markup=kb.back_button("info_bells")
@@ -367,7 +370,7 @@ async def show_bells_regular(update, context):
 
 
 async def show_bells_preholiday(update, context):
-    if await _check_banned_callback(update):
+    if await _check_banned_callback(update, context):
         return
     query = update.callback_query
     await query.answer()
@@ -384,7 +387,7 @@ async def show_bells_preholiday(update, context):
         except Exception:
             logger.exception("bells_pre failed")
             try:
- await query.edit_message_text("❌ Ошибка генерации.", reply_markup=kb.bells_choice_kb())
+                await query.edit_message_text("❌ Ошибка генерации.", reply_markup=kb.bells_choice_kb())
             except Exception:
                 pass
             return
@@ -400,7 +403,7 @@ async def show_bells_preholiday(update, context):
 
 
 async def show_sched_img_menu(update, context):
-    if await _check_banned_callback(update):
+    if await _check_banned_callback(update, context):
         return
     query = update.callback_query
     await query.answer()
@@ -419,7 +422,7 @@ async def show_sched_img_menu(update, context):
 
 
 async def send_schedule_image(update, context):
-    if await _check_banned_callback(update):
+    if await _check_banned_callback(update, context):
         return
     query = update.callback_query
     await query.answer()
@@ -469,7 +472,7 @@ async def _render_cabinet_text_and_kb(user_id):
     hw = "✅ Вкл" if s.get("notify_homework") else "❌ Выкл"
     ec = "✅ Вкл" if s.get("notify_extra_classes") else "❌ Выкл"
     text = (
-        f"🔔 <b>Уведомления</b>\n\n"
+        f"   <b>Уведомления</b>\n\n"
         f"Привет, <b>{name}</b>!\n\n"
         f"Нажми на категорию, чтобы включить или выключить:\n\n"
         f"📅 Замены: {repl}\n"
@@ -481,7 +484,7 @@ async def _render_cabinet_text_and_kb(user_id):
 
 
 async def show_cabinet(update, context):
-    if await _check_banned_callback(update):
+    if await _check_banned_callback(update, context):
         return
     query = update.callback_query
     await query.answer()
@@ -491,7 +494,7 @@ async def show_cabinet(update, context):
 
 
 async def cabinet_toggle_notify(update, context):
-    if await _check_banned_callback(update):
+    if await _check_banned_callback(update, context):
         return
     query = update.callback_query
     await query.answer()
