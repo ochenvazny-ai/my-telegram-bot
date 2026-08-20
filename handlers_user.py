@@ -2,7 +2,8 @@ import logging
 import asyncio
 import io
 from telegram import Update
-from telegram.ext import ContextTypesimport database as db
+from telegram.ext import ContextTypes
+    import database as db
 import keyboards as kb
 import schedule_service as sched
 import schedule_image as sched_img
