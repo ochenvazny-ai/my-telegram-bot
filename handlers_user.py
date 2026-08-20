@@ -1,26 +1,3 @@
-async def start(update, context):
-    user = update.effective_user
-    await asyncio.to_thread(db.upsert_user, user.id, user.username, user.first_name)
-
-    display_name = await asyncio.to_thread(db.get_user_display_name, user.id)
-    if not display_name:
-        try:
-            await update.message.reply_text(WELCOME_TEXT, reply_markup=kb.reply_menu_button())
-        except Exception:
-            pass
-        return WELCOME_NAME```
-
-Проблема в том, что `handle_menu_reply_button` **вызывает `start()` напрямую** — а внутри `start()` стоит `await asyncio.to_thread(db.get_user_display_name, user.id)`. Если функция вернёт `None` или упадёт с исключением, мы заходим в `if not display_name` и показываем приветствие ещё раз.
-
-**Но скорее всего проблема в другом:** ConversationHandler с `entry_points=[CommandHandler("start", hu.start)]` ловит **любой текст** как начало диалога, потому что `MessageHandler` в состоянии `WELCOME_NAME` ждёт любой текст.
-
-**Точная причина:** ConversationHandler **завершает диалог** через `return None` (в моём коде). Но после `return None` контекст **запоминает состояние**. Если юзер уже отвечал на welcome — диалог завершился. Если снова пишет текст — ConversationHandler может его перехватить.
-
-**Решение простое:** убираю `handle_menu_reply_button` который дублирует start, и делаю так, чтобы кнопка «📋 Меню» **только показывала главное меню**, не трогая `start`.
-
-Вот исправленный `handlers_user.py` (целиком, ничего лишнего не трогал):
-
-```python
 import logging
 import asyncio
 import io
@@ -109,7 +86,6 @@ async def my_id(update, context):
 
 
 async def show_main_menu_only(update, context):
-    """Кнопка «📋 Меню» — показывает главное меню, БЕЗ приветствия."""
     user_id = update.effective_user.id
     admin = await asyncio.to_thread(db.is_admin, user_id)
     text = await _greeting_text()
@@ -147,7 +123,7 @@ async def main_menu_callback(update, context):
         except Exception:
             pass
         await context.bot.send_message(
-            chat_id=update.effective_chat.id, text=text, reply_markup=kb.main_menu_kb(admin)
+ chat_id=update.effective_chat.id, text=text, reply_markup=kb.main_menu_kb(admin)
         )
 
 
@@ -232,7 +208,7 @@ async def show_extra_classes(update, context):
     if not items:
         await query.edit_message_text("📭 Нет активных дополнительных занятий.", reply_markup=kb.back_button())
         return
-    await query.edit_message_text("📚 Дополнительные занятия. Выберите:", reply_markup=kb.extra_classes_list_kb(items))
+    await query.edit_message_text("   Дополнительные занятия. Выберите:", reply_markup=kb.extra_classes_list_kb(items))
 
 
 async def extra_class_open(update, context):
@@ -299,7 +275,7 @@ async def show_bells_menu(update, context):
             logger.exception("del photo")
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
-            text="📞 Расписание звонков. Выберите тип дня:",
+            text="   Расписание звонков. Выберите тип дня:",
             reply_markup=kb.bells_choice_kb(),
         )
         return
@@ -355,7 +331,7 @@ async def show_bells_preholiday(update, context):
             try:
                 await query.edit_message_text("❌ Ошибка генерации.", reply_markup=kb.bells_choice_kb())
             except Exception:
-                pass
+ pass
             return
     else:
         data = cached
