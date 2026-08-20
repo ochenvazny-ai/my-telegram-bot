@@ -1,6 +1,5 @@
 import logging
 from contextlib import contextmanager
-from datetime import date as date_cls
 import psycopg2
 from psycopg2 import pool
 from psycopg2.extras import RealDictCursor
@@ -29,7 +28,6 @@ def get_cursor(commit=False):
 
 
 def upsert_user(user_id, username=None, first_name=None):
-    """Создаёт/обновляет юзера. display_name НЕ трогает."""
     try:
         with get_cursor(commit=True) as cur:
             cur.execute("""
@@ -211,22 +209,6 @@ def deactivate_announcement_db(ann_id):
         return False
 
 
-def is_pre_holiday_today(mmdd):
-    return False
-
-
-def set_pre_holiday(mmdd):
-    return True
-
-
-def get_active_pre_holidays():
-    return []
-
-
-def unset_pre_holiday(ph_id):
-    return True
-
-
 DEFAULT_PAIRS_NUM = 4
 DEFAULT_PAIRS_DEN = 3
 
@@ -349,7 +331,7 @@ def save_schedule_cache(target_date, week_type, day, entries):
                     target_date, week_type, day, e["pair_num"], e["subject"], e.get("teacher", ""),
                     e.get("room", ""), e.get("is_replaced", False),
                     e.get("original_subject"), e.get("original_teacher"), e.get("original_room"),
- ))
+                ))
         return True
     except Exception:
         logger.exception("save_schedule_cache failed")
@@ -459,7 +441,7 @@ def get_active_extra_classes():
                 "WHERE is_active = true ORDER BY created_at DESC;"
             )
             return [(r["id"], r["subject"], r["description"], r["photo_id"], str(r["created_at"]))
- for r in cur.fetchall()]
+                    for r in cur.fetchall()]
     except Exception:
         logger.exception("get_active_extra_classes failed")
         return []
@@ -471,7 +453,7 @@ def get_extra_class(item_id):
             cur.execute(
                 "SELECT id, subject, description, photo_id FROM extra_classes "
                 "WHERE id = %s AND is_active = true;", (item_id,)
- )
+            )
             row = cur.fetchone()
             if not row:
                 return None

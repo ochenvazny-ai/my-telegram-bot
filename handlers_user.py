@@ -1,13 +1,11 @@
 import logging
 import asyncio
 import io
-from telegram import Update
 from telegram.ext import ContextTypes
 import database as db
 import keyboards as kb
 import schedule_service as sched
 import schedule_image as sched_img
-from config import WELCOME_NAME
 
 logger = logging.getLogger(__name__)
 
@@ -53,17 +51,11 @@ async def _send_main_menu(context, chat_id, user_id):
 async def start(update, context):
     user = update.effective_user
     await asyncio.to_thread(db.upsert_user, user.id, user.username, user.first_name)
-
-    display_name = await asyncio.to_thread(db.get_user_display_name, user.id)
-    if not display_name:
-        try:
-            await update.message.reply_text(WELCOME_TEXT, reply_markup=kb.reply_menu_button())
-        except Exception:
-            pass
-        return WELCOME_NAME
-
-    await _send_main_menu(context, update.effective_chat.id, user.id)
-    return None
+    try:
+        await update.message.reply_text(WELCOME_TEXT, reply_markup=kb.reply_menu_button())
+    except Exception:
+        pass
+    return 0  # WELCOME_NAME
 
 
 async def welcome_finish(update, context):
@@ -71,15 +63,16 @@ async def welcome_finish(update, context):
     user = update.effective_user
     if not name:
         await update.message.reply_text("Имя не может быть пустым. Введи, пожалуйста, своё имя:")
-        return WELCOME_NAME
+        return 0
 
-    old_name = await asyncio.to_thread(db.get_user_display_name, user.id) or "неизвестно"
+    old_name = await asyncio.to_thread(db.get_user_display_name, user.id)
     await asyncio.to_thread(db.set_user_display_name, user.id, name)
-    await update.message.reply_text(
-        f"✅ Имя обновлено: {old_name} → {name}"
-    )
+    if old_name:
+        await update.message.reply_text(f"✅ Имя обновлено: {old_name} → {name}")
+    else:
+        await update.message.reply_text(f"✅ Отлично, я тебя узнал!\n\nУспехов в учёбе, {name}! 📚")
     await _send_main_menu(context, update.effective_chat.id, user.id)
-    return None
+    return ConversationHandler.END if False else -1  # exit conv
 
 
 async def my_id(update, context):
@@ -105,7 +98,6 @@ async def on_user_blocked_bot(update, context):
             return
         if result.new_chat_member.status in ("left", "kicked"):
             await asyncio.to_thread(db.delete_user_by_id, result.chat.id)
-            logger.info("User %s удалён", result.chat.id)
     except Exception:
         logger.exception("on_user_blocked_bot failed")
 
@@ -124,7 +116,7 @@ async def main_menu_callback(update, context):
         except Exception:
             pass
         await context.bot.send_message(
- chat_id=update.effective_chat.id, text=text, reply_markup=kb.main_menu_kb(admin)
+            chat_id=update.effective_chat.id, text=text, reply_markup=kb.main_menu_kb(admin)
         )
 
 
@@ -202,7 +194,7 @@ async def show_extra_classes(update, context):
             return
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
-            text="📚 Дополнительные занятия. Выберите:",
+            text="   Дополнительные занятия. Выберите:",
             reply_markup=kb.extra_classes_list_kb(items),
         )
         return
@@ -276,7 +268,7 @@ async def show_bells_menu(update, context):
             logger.exception("del photo")
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
-            text="📞 Расписание звонков. Выберите тип дня:",
+            text="   Расписание звонков. Выберите тип дня:",
             reply_markup=kb.bells_choice_kb(),
         )
         return
@@ -332,7 +324,7 @@ async def show_bells_preholiday(update, context):
             try:
                 await query.edit_message_text("❌ Ошибка генерации.", reply_markup=kb.bells_choice_kb())
             except Exception:
-                pass   # <--- ИСПРАВЛЕНО
+                pass
             return
     else:
         data = cached
@@ -473,3 +465,8 @@ async def cabinet_toggle_notify(update, context):
         await query.edit_message_text(text, parse_mode='HTML', reply_markup=kb.cabinet_menu_kb())
     except Exception:
         logger.exception("edit cabinet failed")
+
+
+# Состояние диалога welcome
+WELCOME_NAME = 0
+from telegram.ext import ConversationHandler

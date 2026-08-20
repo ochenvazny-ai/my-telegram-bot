@@ -4,12 +4,12 @@ from config import WEEKDAYS_RU
 
 def main_menu_kb(is_admin_user):
     kb = [
-        [InlineKeyboardButton("📅 Замены", callback_data="menu_zam")],
+        [InlineKeyboardButton("   Замены", callback_data="menu_zam")],
         [InlineKeyboardButton("📚 Домашка", callback_data="menu_hw")],
         [InlineKeyboardButton("📢 Объявления", callback_data="menu_ann")],
         [InlineKeyboardButton("📚 Доп. занятия", callback_data="menu_extra")],
         [InlineKeyboardButton("ℹ️ Учебная инфа", callback_data="menu_info")],
-        [InlineKeyboardButton("🔔 Уведомления", callback_data="cabinet")],
+        [InlineKeyboardButton("   Уведомления", callback_data="cabinet")],
     ]
     if is_admin_user:
         kb.append([InlineKeyboardButton("👑 Админка", callback_data="admin_panel")])
@@ -21,11 +21,11 @@ def reply_menu_button():
 
 
 def back_button(callback_data="main_menu"):
-    return InlineKeyboardMarkup([[InlineKeyboardButton("   Назад", callback_data=callback_data)]])
+    return InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Назад", callback_data=callback_data)]])
 
 
 def cancel_button(callback_data="cancel_action"):
-    return InlineKeyboardMarkup([[InlineKeyboardButton("❌ Отмена", callback_data=callback_data)]])
+    return InlineKeyboardMarkup([[InlineKeyboardButton("   Отмена", callback_data=callback_data)]])
 
 
 def confirm_kb(action, item_id):
@@ -35,7 +35,6 @@ def confirm_kb(action, item_id):
     ])
 
 
-# ===== УВЕДОМЛЕНИЯ (кабинет) =====
 def cabinet_menu_kb():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("📅 Замены", callback_data="toggle_replacements")],
@@ -46,7 +45,6 @@ def cabinet_menu_kb():
     ])
 
 
-# ===== ИНФО =====
 def info_menu_kb():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("📞 Расписание звонков", callback_data="info_bells")],
@@ -72,7 +70,6 @@ def schedule_img_choice_kb():
     ])
 
 
-# ===== ДОП. ЗАНЯТИЯ =====
 def extra_classes_list_kb(items):
     buttons = []
     for idx, item in enumerate(items, start=1):
@@ -98,7 +95,6 @@ def ann_skip_photo_kb():
     ])
 
 
-# ===== АДМИНКА =====
 def admin_panel_kb():
     kb = [
         [InlineKeyboardButton("📚 Домашнее задание", callback_data="a_hw_menu")],
@@ -114,7 +110,7 @@ def admin_panel_kb():
 def users_menu_kb():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("👤 Пользователи", callback_data="users_view")],
-        [InlineKeyboardButton("👑 Админы", callback_data="admins_view")],
+        [InlineKeyboardButton("   Админы", callback_data="admins_view")],
         [InlineKeyboardButton("🔙 Назад", callback_data="admin_panel")],
     ])
 
@@ -142,7 +138,6 @@ def users_paginated_kb(users, page):
     for u in users[page*30:(page+1)*30]:
         user_id, _username, _first_name, display_name, _created = u
         name = display_name or _first_name or _username or "Без имени"
-        short = name[:25] + "..." if len(name) > 25 else short
         short = name[:25] + "..." if len(name) > 25 else name
         buttons.append([InlineKeyboardButton(f"{short} (ID:{user_id})", callback_data=f"useraction_{user_id}")])
     nav = []
@@ -291,15 +286,13 @@ def schedule_edit_menu_kb():
 
 
 def delete_all_day_kb():
-    buttons = [[InlineKeyboardButton(WEEKDAYS_RU[i].capitalize(), callback_data=f"delallday_{i}")]
- for i in range(6)]
+    buttons = [[InlineKeyboardButton(WEEKDAYS_RU[i].capitalize(), callback_data=f"delallday_{i}") for i in range(6)]]
     buttons.append([InlineKeyboardButton("🔙 Назад", callback_data="a_sched_menu")])
     return InlineKeyboardMarkup(buttons)
 
 
 def weekday_choice_kb():
-    buttons = [[InlineKeyboardButton(WEEKDAYS_RU[i].capitalize(), callback_data=f"schedday_{i}")]
-               for i in range(6)]
+    buttons = [[InlineKeyboardButton(WEEKDAYS_RU[i].capitalize(), callback_data=f"schedday_{i}") for i in range(6)]]
     buttons.append([InlineKeyboardButton("🔙 Назад", callback_data="a_sched_menu")])
     return InlineKeyboardMarkup(buttons)
 

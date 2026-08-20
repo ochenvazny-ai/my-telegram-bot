@@ -17,8 +17,8 @@ from config import (
     BOT_TOKEN, HW_TEXT, HW_DUE, ANN_TEXT, ANN_PHOTO, ANN_CONFIRM,
     REPLNOTE_TEXT, REPLNOTE_CONFIRM, SCHED_UPLOAD_TEXT, SCHED_FIELD_VALUE,
     ADMIN_ID, ADMIN_NAME, EXTRA_NAME, EXTRA_CONTENT, SET_GROUP, SET_BOT_NAME, SET_BOT_PHOTO,
-    WELCOME_NAME,
 )
+from handlers_user import WELCOME_NAME
 
 logging.basicConfig(format="%(asctime)s [%(levelname)s] %(name)s: %(message)s", level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -53,7 +53,7 @@ def build_conversations():
         CallbackQueryHandler(ha.back_to_admin_panel, pattern="^admin_panel$"),
     ]
 
-    # Диалог приветствия — принимает ЛЮБОЙ текст КРОМЕ «📋 Меню» и команд
+    # Welcome: ловим /start, ждём имя (любой текст кроме «📋 Меню» и команд)
     conv_welcome = ConversationHandler(
         entry_points=[CommandHandler("start", hu.start)],
         states={
@@ -170,10 +170,7 @@ def build_conversations():
         conv_add_hw, conv_add_ann, conv_add_replnote, conv_add_admin,
         conv_sched_upload, conv_sched_field,
         conv_extra_add, conv_set_group, conv_set_bot_name, conv_set_bot_photo,
-    ]
-
-
-def main():
+    ]def main():
     global _broadcast_bot
     db.init_default_schedule()
 
@@ -188,8 +185,7 @@ def main():
 
     application.add_handler(ChatMemberHandler(hu.on_user_blocked_bot, ChatMemberHandler.MY_CHAT_MEMBER))
 
-    # Кнопка «📋 Меню» — обработчик ПОСЛЕ ConversationHandler,
-    # и в conv_welcome добавлен ~filters.Regex("^📋 Меню$"), чтобы диалог её игнорил.
+    # Reply-кнопка «📋 Меню» — обычный хендлер, фильтр уже исключён в conv_welcome
     application.add_handler(MessageHandler(
         filters.Regex("^📋 Меню$") & ~filters.COMMAND, hu.show_main_menu_only
     ))
