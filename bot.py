@@ -170,7 +170,10 @@ def build_conversations():
         conv_add_hw, conv_add_ann, conv_add_replnote, conv_add_admin,
         conv_sched_upload, conv_sched_field,
         conv_extra_add, conv_set_group, conv_set_bot_name, conv_set_bot_photo,
-    ]def main():
+    ]
+
+
+def main():
     global _broadcast_bot
     db.init_default_schedule()
 
