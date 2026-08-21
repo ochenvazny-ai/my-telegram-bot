@@ -166,7 +166,7 @@ def add_task_db(subject, task_text, due_date_str, photos=None):
                 "INSERT INTO homework (subject, task, due_date, photo_id, caption, photos, created_at) "
                 "VALUES (%s, %s, %s, %s, %s, %s, NOW()) RETURNING id;",
                 (subject, task_text, due_date_str, photos_arr[0] if photos_arr else None,
- task_text if photos_arr else None, photos_arr),
+                 task_text if photos_arr else None, photos_arr),
             )
             return cur.fetchone()["id"]
     except Exception:
@@ -209,7 +209,8 @@ def delete_all_tasks_db():
     try:
         with get_cursor(commit=True) as cur:
             cur.execute("DELETE FROM homework;")
-            return True except Exception:
+            return True
+    except Exception:
         logger.exception("delete_all_tasks_db failed")
         return False
 
@@ -652,12 +653,12 @@ def format_due_date_for_display(date_obj):
     weekdays = ["понедельник", "вторник", "среда", "четверг", "пятница", "суббота", "воскресенье"]
     target_wd = date_obj.weekday()
     today_wd = today.weekday()
-    days_until_target = (target_wd - today_wd) %7
+    days_until_target = (target_wd - today_wd) % 7
     if days_until_target == 0:
         days_until_target = 7
-    if days_until_target <=3:
+    if days_until_target <= 3:
         return f"В {weekdays[target_wd]}"
     if days_until_target <= 7:
         return f"В {weekdays[target_wd]}"
-    second_target = (today_wd + days_until_target +7) % 7
+    second_target = (today_wd + days_until_target + 7) % 7
     return f"В следующий {weekdays[second_target]}"
