@@ -14,10 +14,14 @@ import handlers_user as hu
 import handlers_admin as ha
 import schedule_image as sched_img
 from config import (
-    BOT_TOKEN, HW_TEXT, HW_DUE, ANN_TEXT, ANN_PHOTO, ANN_CONFIRM,
-    REPLNOTE_TEXT, REPLNOTE_CONFIRM, SCHED_UPLOAD_TEXT, SCHED_FIELD_VALUE,
-    ADMIN_ID, ADMIN_NAME, EXTRA_NAME, EXTRA_CONTENT,
+    BOT_TOKEN,
+    ANN_TEXT, ANN_PHOTO, ANN_CONFIRM,
+    REPLNOTE_TEXT, REPLNOTE_CONFIRM,
+    SCHED_UPLOAD_TEXT, SCHED_FIELD_VALUE,
+    ADMIN_ID, ADMIN_NAME,
+    EXTRA_NAME, EXTRA_CONTENT,
     SET_GROUP, SET_BOT_NAME, SET_BOT_PHOTO,
+    HW_SUBJECT, HW_TASK, HW_PHOTOS, HW_DUE,
 )
 from handlers_user import WELCOME_NAME
 
@@ -69,16 +73,32 @@ def build_conversations():
         per_message=False,
     )
 
+    # Новый диалог добавления ДЗ с состояниями HW_SUBJECT, HW_TASK, HW_PHOTOS, HW_DUE
     conv_add_hw = ConversationHandler(
         entry_points=[CallbackQueryHandler(ha.add_hw_start, pattern="^a_add_hw$")],
         states={
-            HW_TEXT: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND & ~filters.Regex("^📋 Меню$"), ha.add_hw_text),
-                MessageHandler(filters.PHOTO, ha.add_hw_text),
-                CallbackQueryHandler(ha.add_hw_no_caption, pattern="^a_hw_no_caption$"),
+            HW_SUBJECT: [
+                MessageHandler(
+                    filters.TEXT & ~filters.COMMAND & ~filters.Regex("^📋 Меню$"),
+                    ha.add_hw_subject
+                ),
+            ],
+            HW_TASK: [
+                MessageHandler(
+                    filters.TEXT & ~filters.COMMAND & ~filters.Regex("^📋 Меню$"),
+                    ha.add_hw_task
+                ),
+            ],
+            HW_PHOTOS: [
+                MessageHandler(filters.PHOTO, ha.add_hw_photo),
+                CallbackQueryHandler(ha.add_hw_no_more_photos, pattern="^hw_no_more_photos$"),
+                CallbackQueryHandler(ha.add_hw_no_more_photos, pattern="^a_hw_no_subject$"),  # fallback
             ],
             HW_DUE: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND & ~filters.Regex("^📋 Меню$"), ha.add_hw_due),
+                MessageHandler(
+                    filters.TEXT & ~filters.COMMAND & ~filters.Regex("^📋 Меню$"),
+                    ha.add_hw_due
+                ),
                 CallbackQueryHandler(ha.add_hw_no_due, pattern="^a_hw_no_due$"),
             ],
         },
@@ -179,7 +199,8 @@ def build_conversations():
 
     return [
         conv_welcome,
-        conv_add_hw, conv_add_ann, conv_add_replnote, conv_add_admin,
+        conv_add_hw,
+        conv_add_ann, conv_add_replnote, conv_add_admin,
         conv_sched_upload, conv_sched_field,
         conv_extra_add, conv_set_group, conv_set_bot_name, conv_set_bot_photo,
     ]
