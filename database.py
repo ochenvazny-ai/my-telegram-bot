@@ -1,664 +1,1332 @@
+import re
+import io
+import os
+import asyncio
 import logging
-from contextlib import contextmanager
-import psycopg2
-from psycopg2 import pool
-from psycopg2.extras import RealDictCursor
+from datetime import datetime, timedelta
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import (
+    ContextTypes, ConversationHandler, MessageHandler, CallbackQueryHandler, filters,
+)
 
-from config import DATABASE_URL, GROUP_NAME, BOT_DISPLAY_NAME
+import database as db
+import keyboards as kb
+import schedule_image as sched_img
+import schedule_service as sched
+from config import (
+    INITIAL_ADMIN_ID, WEEKDAYS_RU,
+    HW_TEXT, HW_DUE, ANN_TEXT, ANN_PHOTO, ANN_CONFIRM,
+    REPLNOTE_TEXT, REPLNOTE_CONFIRM,
+    SCHED_UPLOAD_TEXT, SCHED_FIELD_VALUE, ADMIN_ID, ADMIN_NAME,
+    EXTRA_NAME, EXTRA_CONTENT, SET_GROUP, SET_BOT_NAME, SET_BOT_PHOTO,
+)
 
 logger = logging.getLogger(__name__)
 
-_pool = psycopg2.pool.ThreadedConnectionPool(minconn=1, maxconn=10, dsn=DATABASE_URL)
+
+def _pick_display_name(user_tuple):
+    if len(user_tuple) >= 4 and user_tuple[3]:
+        return user_tuple[3]
+    if len(user_tuple) >= 3 and user_tuple[2]:
+        return user_tuple[2]
+    if len(user_tuple) >= 2 and user_tuple[1]:
+        return user_tuple[1]
+    return "Без имени"
 
 
-@contextmanager
-def get_cursor(commit=False):
-    conn = _pool.getconn()
-    try:
-        cur = conn.cursor(cursor_factory=RealDictCursor)
-        yield cur
-        if commit:
-            conn.commit()
-    except Exception:
-        conn.rollback()
-        raise
-    finally:
-        cur.close()
-        _pool.putconn(conn)
-
-
-def upsert_user(user_id, username=None, first_name=None):
-    try:
-        with get_cursor(commit=True) as cur:
-            cur.execute("""
-                INSERT INTO users (id, username, first_name, created_at)
-                VALUES (%s, %s, %s, NOW())
-                ON CONFLICT (id) DO UPDATE
-                SET username = EXCLUDED.username, first_name = EXCLUDED.first_name;
-            """, (user_id, username, first_name))
-    except Exception:
-        logger.exception("upsert_user failed")
-
-
-def set_user_display_name(user_id, display_name):
-    try:
-        with get_cursor(commit=True) as cur:
-            cur.execute("UPDATE users SET display_name = %s WHERE id = %s;", (display_name, user_id))
-            return True
-    except Exception:
-        logger.exception("set_user_display_name failed")
+async def _require_admin(update):
+    query = update.callback_query
+    user_id = update.effective_user.id
+    admin = await asyncio.to_thread(db.is_admin, user_id)
+    if not admin:
+        await query.answer("⛔ Нет прав.", show_alert=True)
         return False
+    return True
 
 
-def get_user_display_name(user_id):
-    try:
-        with get_cursor() as cur:
-            cur.execute("SELECT display_name FROM users WHERE id = %s;", (user_id,))
-            row = cur.fetchone()
-            return row["display_name"] if row else None
-    except Exception:
-        logger.exception("get_user_display_name failed")
-        return None
+async def admin_panel_entry(update, context):
+    query = update.callback_query
+    await query.answer()
+    if not await _require_admin(update):
+        return
+    await query.edit_message_text("👑 Админ-панель", reply_markup=kb.admin_panel_kb())
 
 
-def is_user_banned(user_id):
-    try:
-        with get_cursor() as cur:
-            cur.execute("SELECT is_banned FROM users WHERE id = %s;", (user_id,))
-            row = cur.fetchone()
-            return bool(row and row.get("is_banned"))
-    except Exception:
-        return False
+async def back_to_admin_panel(update, context):
+    query = update.callback_query
+    await query.answer()
+    context.user_data.clear()
+    await query.edit_message_text("👑 Админ-панель", reply_markup=kb.admin_panel_kb())
+    return ConversationHandler.END
 
 
-def ban_user(user_id):
-    try:
-        with get_cursor(commit=True) as cur:
-            cur.execute(
-                "UPDATE users SET is_banned = true, banned_at = NOW() WHERE id = %s;",
-                (user_id,),
+async def cancel_conversation(update, context):
+    context.user_data.clear()
+    query = update.callback_query
+    if query:
+        await query.answer()
+        await query.edit_message_text("❌ Отменено.\n\n👑 Админ-панель", reply_markup=kb.admin_panel_kb())
+    return ConversationHandler.END
+
+
+async def hw_menu(update, context):
+    query = update.callback_query
+    await query.answer()
+    if not await _require_admin(update):
+        return
+    await _show_hw_view(update, context)
+
+
+async def _show_hw_view(update, context):
+    query = update.callback_query
+    tasks = await asyncio.to_thread(db.get_all_tasks_db)
+    if not tasks:
+        text = "📭 ДЗ пока нет."
+    else:
+        lines = ["📚 Список ДЗ:\n"]
+        for idx, (db_id, subject, task, due_date, photos, _) in enumerate(tasks, start=1):
+            marker = "📎 " if photos else ""
+            body = task if task else subject
+            due_str = f" — до {due_date}" if due_date else ""
+            lines.append(f"{idx}️⃣ {marker}{body}{due_str}")
+        text = "\n".join(lines)
+    await query.edit_message_text(text, reply_markup=kb.hw_admin_view_kb(has_tasks=bool(tasks)))
+
+
+async def _show_hw_view_message(context, chat_id, admin_user_id):
+    tasks = await asyncio.to_thread(db.get_all_tasks_db)
+    if not tasks:
+        text = "📭 ДЗ пока нет."
+    else:
+        lines = ["📚 Список ДЗ:\n"]
+        for idx, (db_id, subject, task, due_date, photos, _) in enumerate(tasks, start=1):
+            marker = "📎 " if photos else ""
+            body = task if task else subject
+            due_str = f" — до {due_date}" if due_date else ""
+            lines.append(f"{idx}️⃣ {marker}{body}{due_str}")
+        text = "\n".join(lines)
+    await context.bot.send_message(
+        chat_id=chat_id, text=text,
+        reply_markup=kb.hw_admin_view_kb(has_tasks=bool(tasks))
+    )
+
+
+async def hw_view_back(update, context):
+    query = update.callback_query
+    await query.answer()
+    if not await _require_admin(update):
+        return
+    await _show_hw_view(update, context)
+
+
+async def add_hw_start(update, context):
+    query = update.callback_query
+    await query.answer()
+    if not await _require_admin(update):
+        return ConversationHandler.END
+    await query.edit_message_text(
+        "📝 Пришлите задание (текстом) или прикрепите фото.\n"
+        "Если фото — бот спросит подпись.",
+        reply_markup=kb.cancel_button(),
+    )
+    return HW_TEXT
+
+
+async def add_hw_text(update, context):
+    if update.message and update.message.photo:
+        photo_id = update.message.photo[-1].file_id
+        caption = (update.message.caption or "").strip()
+        context.user_data['hw_photo_id'] = photo_id
+        if caption:
+            context.user_data['hw_task'] = caption
+            context.user_data.pop('hw_photo_id', None)
+            context.user_data['hw_final_photo_id'] = photo_id
+            await update.message.reply_text(
+                f"📝 Подпись получена:\n{caption}\n\nВведите срок сдачи:",
+                reply_markup=kb.no_due_button(),
             )
-            return True
-    except Exception:
-        logger.exception("ban_user failed")
-        return False
-
-
-def unban_user(user_id):
-    try:
-        with get_cursor(commit=True) as cur:
-            cur.execute(
-                "UPDATE users SET is_banned = false, banned_at = NULL WHERE id = %s;",
-                (user_id,),
+            return HW_DUE
+        else:
+            await update.message.reply_text(
+                "📎 Фото получено. Введите подпись (или «Без подписи»):",
+                reply_markup=kb.no_caption_button(),
             )
-            return True
-    except Exception:
-        logger.exception("unban_user failed")
-        return False
-
-
-def delete_user_by_id(user_id):
-    return ban_user(user_id)
-
-
-def get_all_user_ids():
-    try:
-        with get_cursor() as cur:
-            cur.execute(
-                "SELECT id FROM users WHERE is_banned = false OR is_banned IS NULL;"
-            )
-            return [row["id"] for row in cur.fetchall()]
-    except Exception:
-        logger.exception("get_all_user_ids failed")
-        return []
-
-
-def is_admin(user_id):
-    try:
-        with get_cursor() as cur:
-            cur.execute("SELECT 1 FROM admins WHERE user_id = %s;", (user_id,))
-            return cur.fetchone() is not None
-    except Exception:
-        logger.exception("is_admin failed")
-        return False
-
-
-def get_all_admins():
-    try:
-        with get_cursor() as cur:
-            cur.execute("SELECT user_id, username, name FROM admins ORDER BY name;")
-            return [(row["user_id"], row["username"], row["name"]) for row in cur.fetchall()]
-    except Exception:
-        logger.exception("get_all_admins failed")
-        return []
-
-
-def add_admin_to_db(user_id, username, name):
-    try:
-        with get_cursor(commit=True) as cur:
-            cur.execute(
-                "INSERT INTO admins (user_id, username, name) VALUES (%s, %s, %s) "
-                "ON CONFLICT (user_id) DO NOTHING;",
-                (user_id, username, name),
-            )
-        return True
-    except Exception:
-        logger.exception("add_admin_to_db failed")
-        return False
-
-
-def remove_admin_by_user_id(user_id):
-    try:
-        with get_cursor(commit=True) as cur:
-            cur.execute("DELETE FROM admins WHERE user_id = %s RETURNING user_id;", (user_id,))
-            return cur.fetchone() is not None
-    except Exception:
-        logger.exception("remove_admin_by_user_id failed")
-        return False
-
-
-def add_task_db(subject, task_text, due_date_str, photos=None):
-    """Добавляет ДЗ: предмет, задание, срок (строка 'ДД.ММ.ГГ' или None), список photo_id."""
-    try:
-        photos_arr = photos or []
-        with get_cursor(commit=True) as cur:
-            cur.execute(
-                "INSERT INTO homework (subject, task, due_date, photo_id, caption, photos, created_at) "
-                "VALUES (%s, %s, %s, %s, %s, %s, NOW()) RETURNING id;",
-                (subject, task_text, due_date_str, photos_arr[0] if photos_arr else None,
-                 task_text if photos_arr else None, photos_arr),
-            )
-            return cur.fetchone()["id"]
-    except Exception:
-        logger.exception("add_task_db failed")
-        return None
-
-
-def get_all_tasks_db():
-    """Каждый элемент: (id, subject, task, due_date, photos_list, created_at)."""
-    try:
-        with get_cursor() as cur:
-            cur.execute(
-                "SELECT id, subject, task, due_date, photos, created_at FROM homework "
-                "ORDER BY due_date NULLS LAST, created_at;"
-            )
-            result = []
-            for r in cur.fetchall():
-                photos = r.get("photos") or []
-                result.append((
-                    r["id"], r["subject"], r["task"], r["due_date"],
-                    photos, r["created_at"],
-                ))
-            return result
-    except Exception:
-        logger.exception("get_all_tasks_db failed")
-        return []
-
-
-def delete_task_db(task_id):
-    try:
-        with get_cursor(commit=True) as cur:
-            cur.execute("DELETE FROM homework WHERE id = %s RETURNING id;", (task_id,))
-            return cur.fetchone() is not None
-    except Exception:
-        logger.exception("delete_task_db failed")
-        return False
-
-
-def delete_all_tasks_db():
-    try:
-        with get_cursor(commit=True) as cur:
-            cur.execute("DELETE FROM homework;")
-            return True
-    except Exception:
-        logger.exception("delete_all_tasks_db failed")
-        return False
-
-
-def add_announcement_db(text, author_id, is_replacement_note=False, photo_id=None):
-    try:
-        with get_cursor(commit=True) as cur:
-            cur.execute(
-                "INSERT INTO announcements (text, created_at, author_id, is_active, is_replacement_note, photo_id) "
-                "VALUES (%s, NOW(), %s, true, %s, %s) RETURNING id;",
-                (text, author_id, is_replacement_note, photo_id),
-            )
-            return cur.fetchone()["id"]
-    except Exception:
-        logger.exception("add_announcement_db failed")
-        return None
-
-
-def get_active_announcements():
-    try:
-        with get_cursor() as cur:
-            cur.execute(
-                "SELECT id, text, created_at, is_replacement_note, photo_id "
-                "FROM announcements WHERE is_active = true ORDER BY created_at DESC;"
-            )
-            return [(r["id"], r["text"], str(r["created_at"]), r["is_replacement_note"], r["photo_id"])
-                    for r in cur.fetchall()]
-    except Exception:
-        logger.exception("get_active_announcements failed")
-        return []
-
-
-def get_active_replacement_notes():
-    try:
-        with get_cursor() as cur:
-            cur.execute(
-                "SELECT text FROM announcements WHERE is_active = true AND is_replacement_note = true "
-                "ORDER BY created_at DESC;"
-            )
-            return [r["text"] for r in cur.fetchall()]
-    except Exception:
-        logger.exception("get_active_replacement_notes failed")
-        return []
-
-
-def deactivate_announcement_db(ann_id):
-    try:
-        with get_cursor(commit=True) as cur:
-            cur.execute("UPDATE announcements SET is_active = false WHERE id = %s RETURNING id;", (ann_id,))
-            return cur.fetchone() is not None
-    except Exception:
-        logger.exception("deactivate_announcement_db failed")
-        return False
-
-
-DEFAULT_PAIRS_NUM = 4
-DEFAULT_PAIRS_DEN = 3
-
-
-def init_default_schedule():
-    try:
-        with get_cursor(commit=True) as cur:
-            cur.execute("SELECT 1 FROM schedule LIMIT 1;")
-            if cur.fetchone():
-                return
-            for day in range(6):
-                for pair in range(1, DEFAULT_PAIRS_NUM + 1):
-                    cur.execute(
-                        "INSERT INTO schedule (week_type, day_of_week, pair_number, subject, teacher, room, created_at) "
-                        "VALUES (%s,%s,%s,%s,%s,%s,NOW()) ON CONFLICT DO NOTHING;",
-                        ("Числитель", day, pair, f"{pair} пара", "1 преподаватель", "1 Кабинет"),
-                    )
-                for pair in range(1, DEFAULT_PAIRS_DEN + 1):
-                    cur.execute(
-                        "INSERT INTO schedule (week_type, day_of_week, pair_number, subject, teacher, room, created_at) "
-                        "VALUES (%s,%s,%s,%s,%s,%s,NOW()) ON CONFLICT DO NOTHING;",
-                        ("Знаменатель", day, pair, f"{pair} пара", "1 преподаватель", "1 Кабинет"),
-                    )
-        logger.info("Заводское расписание загружено")
-    except Exception:
-        logger.exception("init_default_schedule failed")
-
-
-def get_base_schedule(week_type, day_of_week):
-    try:
-        with get_cursor() as cur:
-            cur.execute(
-                "SELECT pair_number, subject, teacher, room FROM schedule "
-                "WHERE week_type = %s AND day_of_week = %s ORDER BY pair_number;",
-                (week_type, day_of_week),
-            )
-            return {r["pair_number"]: {"subject": r["subject"], "teacher": r["teacher"], "room": r["room"]}
-                    for r in cur.fetchall()}
-    except Exception:
-        logger.exception("get_base_schedule failed")
-        return {}
-
-
-def replace_day_schedule(week_type, day_of_week, entries):
-    try:
-        with get_cursor(commit=True) as cur:
-            cur.execute("DELETE FROM schedule WHERE week_type = %s AND day_of_week = %s;", (week_type, day_of_week))
-            for e in entries:
-                cur.execute(
-                    "INSERT INTO schedule (week_type, day_of_week, pair_number, subject, teacher, room, created_at) "
-                    "VALUES (%s,%s,%s,%s,%s,%s,NOW());",
-                    (week_type, day_of_week, e["pair_number"], e["subject"], e["teacher"], e["room"]),
-                )
-        return True
-    except Exception:
-        logger.exception("replace_day_schedule failed")
-        return False
-
-
-def delete_all_pairs_for_day(day_of_week):
-    try:
-        with get_cursor(commit=True) as cur:
-            cur.execute("DELETE FROM schedule WHERE day_of_week = %s;", (day_of_week,))
-        return True
-    except Exception:
-        logger.exception("delete_all_pairs_for_day failed")
-        return False
-
-
-def upsert_pair(week_type, day_of_week, pair_number, subject, teacher, room):
-    try:
-        with get_cursor(commit=True) as cur:
-            cur.execute("""
-                INSERT INTO schedule (week_type, day_of_week, pair_number, subject, teacher, room, created_at)
-                VALUES (%s,%s,%s,%s,%s,%s,NOW())
-                ON CONFLICT (week_type, day_of_week, pair_number)
-                DO UPDATE SET subject = EXCLUDED.subject, teacher = EXCLUDED.teacher, room = EXCLUDED.room;
-            """, (week_type, day_of_week, pair_number, subject, teacher, room))
-        return True
-    except Exception:
-        logger.exception("upsert_pair failed")
-        return False
-
-
-def delete_pair(week_type, day_of_week, pair_number):
-    try:
-        with get_cursor(commit=True) as cur:
-            cur.execute(
-                "DELETE FROM schedule WHERE week_type=%s AND day_of_week=%s AND pair_number=%s;",
-                (week_type, day_of_week, pair_number),
-            )
-        return True
-    except Exception:
-        logger.exception("delete_pair failed")
-        return False
-
-
-def get_cached_schedule(target_date):
-    try:
-        with get_cursor() as cur:
-            cur.execute("SELECT * FROM schedule_history WHERE date = %s ORDER BY pair_num;", (target_date,))
-            rows = cur.fetchall()
-            return rows if rows else None
-    except Exception:
-        logger.exception("get_cached_schedule failed")
-        return None
-
-
-def save_schedule_cache(target_date, week_type, day, entries):
-    try:
-        with get_cursor(commit=True) as cur:
-            cur.execute("DELETE FROM schedule_history WHERE date = %s;", (target_date,))
-            for e in entries:
-                cur.execute("""
-                    INSERT INTO schedule_history
-                    (date, week_type, day, pair_num, subject, teacher, room, is_replaced,
-                     original_subject, original_teacher, original_room, created_at)
-                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,NOW());
-                """, (
-                    target_date, week_type, day, e["pair_num"], e["subject"], e.get("teacher", ""),
-                    e.get("room", ""), e.get("is_replaced", False),
-                    e.get("original_subject"), e.get("original_teacher"), e.get("original_room"),
-                ))
-        return True
-    except Exception:
-        logger.exception("save_schedule_cache failed")
-        return False
-
-
-def get_setting(key, default=None):
-    try:
-        with get_cursor() as cur:
-            cur.execute("SELECT value FROM settings WHERE key = %s;", (key,))
-            row = cur.fetchone()
-            return row["value"] if row else default
-    except Exception:
-        logger.exception("get_setting failed")
-        return default
-
-
-def set_setting(key, value):
-    try:
-        with get_cursor(commit=True) as cur:
-            cur.execute("""
-                INSERT INTO settings (key, value, created_at) VALUES (%s, %s, NOW())
-                ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value;
-            """, (key, value))
-        return True
-    except Exception:
-        logger.exception("set_setting failed")
-        return False
-
-
-def get_current_shift():
-    return get_setting("current_shift", "1")
-
-
-def set_current_shift(shift):
-    return set_setting("current_shift", shift)
-
-
-def get_group_name():
-    return get_setting("group_name", GROUP_NAME)
-
-
-def set_group_name(name):
-    return set_setting("group_name", name)
-
-
-def get_bot_display_name():
-    return get_setting("bot_display_name", BOT_DISPLAY_NAME)
-
-
-def set_bot_display_name(name):
-    return set_setting("bot_display_name", name)
-
-
-def get_last_replacements_date():
-    return get_setting("last_replacements_date", "")
-
-
-def set_last_replacements_date(date_iso):
-    return set_setting("last_replacements_date", date_iso)
-
-
-def get_image(kind):
-    try:
-        with get_cursor() as cur:
-            cur.execute("SELECT image_bytes FROM schedule_images WHERE kind = %s;", (kind,))
-            row = cur.fetchone()
-            return bytes(row["image_bytes"]) if row else None
-    except Exception:
-        logger.exception("get_image failed")
-        return None
-
-
-def save_image(kind, data):
-    try:
-        with get_cursor(commit=True) as cur:
-            cur.execute("""
-                INSERT INTO schedule_images (kind, image_bytes, updated_at)
-                VALUES (%s, %s, NOW())
-                ON CONFLICT (kind) DO UPDATE SET image_bytes = EXCLUDED.image_bytes, updated_at = NOW();
-            """, (kind, data))
-        return True
-    except Exception:
-        logger.exception("save_image failed")
-        return False
-
-
-def add_extra_class(subject, description, photo_id):
-    try:
-        with get_cursor(commit=True) as cur:
-            cur.execute(
-                "INSERT INTO extra_classes (subject, description, photo_id, created_at, is_active) "
-                "VALUES (%s, %s, %s, NOW(), true) RETURNING id;",
-                (subject, description, photo_id),
-            )
-            return cur.fetchone()["id"]
-    except Exception:
-        logger.exception("add_extra_class failed")
-        return None
-
-
-def get_active_extra_classes():
-    try:
-        with get_cursor() as cur:
-            cur.execute(
-                "SELECT id, subject, description, photo_id, created_at FROM extra_classes "
-                "WHERE is_active = true ORDER BY created_at DESC;"
-            )
-            return [(r["id"], r["subject"], r["description"], r["photo_id"], str(r["created_at"]))
-                    for r in cur.fetchall()]
-    except Exception:
-        logger.exception("get_active_extra_classes failed")
-        return []
-
-
-def get_extra_class(item_id):
-    try:
-        with get_cursor() as cur:
-            cur.execute(
-                "SELECT id, subject, description, photo_id FROM extra_classes "
-                "WHERE id = %s AND is_active = true;", (item_id,)
-            )
-            row = cur.fetchone()
-            if not row:
-                return None
-            return (row["id"], row["subject"], row["description"], row["photo_id"])
-    except Exception:
-        logger.exception("get_extra_class failed")
-        return None
-
-
-def deactivate_extra_class(item_id):
-    try:
-        with get_cursor(commit=True) as cur:
-            cur.execute("UPDATE extra_classes SET is_active = false WHERE id = %s RETURNING id;", (item_id,))
-            return cur.fetchone() is not None
-    except Exception:
-        logger.exception("deactivate_extra_class failed")
-        return False
-
-
-def get_user_settings_row(user_id):
-    try:
-        with get_cursor() as cur:
-            cur.execute(
-                "SELECT id, username, first_name, display_name, is_banned, "
-                "notify_replacements, notify_announcements, notify_homework, notify_extra_classes "
-                "FROM users WHERE id = %s;",
-                (user_id,),
-            )
-            row = cur.fetchone()
-            if not row:
-                return {}
-            return dict(row)
-    except Exception:
-        logger.exception("get_user_settings_row failed")
-        return {}
-
-
-def set_user_notify(user_id, kind, enabled):
-    col_map = {
-        "replacements": "notify_replacements",
-        "announcements": "notify_announcements",
-        "homework": "notify_homework",
-        "extra_classes": "notify_extra_classes",
-    }
-    col = col_map.get(kind)
-    if not col:
-        return False
-    try:
-        with get_cursor(commit=True) as cur:
-            cur.execute(f"UPDATE users SET {col} = %s WHERE id = %s;", (enabled, user_id))
-            return True
-    except Exception:
-        logger.exception("set_user_notify failed")
-        return False
-
-
-def get_all_active_users():
-    try:
-        with get_cursor() as cur:
-            cur.execute(
-                "SELECT id, username, first_name, display_name, created_at FROM users "
-                "WHERE is_banned = false OR is_banned IS NULL ORDER BY created_at DESC;"
-            )
-            return [(r["id"], r["username"], r["first_name"], r["display_name"], str(r["created_at"]))
-                    for r in cur.fetchall()]
-    except Exception:
-        logger.exception("get_all_active_users failed")
-        return []
-
-
-def get_all_banned_users():
-    try:
-        with get_cursor() as cur:
-            cur.execute(
-                "SELECT id, username, first_name, display_name, banned_at FROM users "
-                "WHERE is_banned = true ORDER BY banned_at DESC;"
-            )
-            return [(r["id"], r["username"], r["first_name"], r["display_name"], str(r["banned_at"]))
-                    for r in cur.fetchall()]
-    except Exception:
-        logger.exception("get_all_banned_users failed")
-        return []
-
-
-def get_all_users_with_username():
-    return get_all_active_users()
-
-
-def get_user_ids_with_notify(kind):
-    col_map = {
-        "replacements": "notify_replacements",
-        "announcements": "notify_announcements",
-        "homework": "notify_homework",
-        "extra_classes": "notify_extra_classes",
-    }
-    col = col_map.get(kind)
-    if not col:
-        return []
-    try:
-        with get_cursor() as cur:
-            cur.execute(
-                f"SELECT id FROM users WHERE {col} = true "
-                f"AND (is_banned = false OR is_banned IS NULL);"
-            )
-            return [row["id"] for row in cur.fetchall()]
-    except Exception:
-        logger.exception("get_user_ids_with_notify failed")
-        return []
-
-
-def parse_due_date(text):
-    """Парсит 'ДД.ММ.ГГ' или 'Д.М.ГГ' или 'ДД.ММ.ГГГГ'. Возвращает date или None."""
-    from datetime import datetime
-    if not text:
-        return None
-    text = text.strip()
-    for fmt in ("%d.%m.%y", "%d.%m.%Y", "%d/%m/%y", "%d-%m-%y"):
+            return HW_TEXT
+    text = update.message.text.strip()
+    if text and text != "-":
+        context.user_data['hw_task'] = text
+        context.user_data.pop('hw_final_photo_id', None)
+        await update.message.reply_text(
+            f"📝 Задание:\n{text}\n\nВведите срок сдачи:",
+            reply_markup=kb.no_due_button(),
+        )
+        return HW_DUE
+    await update.message.reply_text("⚠️ Не понимаю. Пришлите текст или фото.")
+    return HW_TEXT
+
+
+async def add_hw_no_caption(update, context):
+    text = update.message.text.strip()
+    if text.lower() in ("без подписи", "пропустить", "-"):
+        context.user_data['hw_task'] = ""
+        context.user_data['hw_final_photo_id'] = context.user_data.get('hw_photo_id')
+        context.user_data.pop('hw_photo_id', None)
+        await update.message.reply_text(
+            "📎 Фото без подписи.\n\nВведите срок сдачи:",
+            reply_markup=kb.no_due_button(),
+        )
+        return HW_DUE
+    context.user_data['hw_task'] = text
+    context.user_data['hw_final_photo_id'] = context.user_data.get('hw_photo_id')
+    context.user_data.pop('hw_photo_id', None)
+    await update.message.reply_text(
+        f"📝 Подпись:\n{text}\n\nВведите срок сдачи:",
+        reply_markup=kb.no_due_button(),
+    )
+    return HW_DUE
+
+
+async def add_hw_due(update, context):
+    text = update.message.text.strip()
+    due_date = None if text in ("-", "Без срока", "без срока", "0") else text
+    task = context.user_data.get('hw_task', '')
+    photo_id = context.user_data.get('hw_final_photo_id')
+    photos = [photo_id] if photo_id else []
+    new_id = await asyncio.to_thread(
+        db.add_task_db, "", task, due_date, photos
+    )
+    if new_id:
+        await update.message.reply_text("✅ Добавлено.")
+    else:
+        await update.message.reply_text("❌ Ошибка.")
+    context.user_data.clear()
+    await _show_hw_view_message(update.message.get_bot(), update.effective_chat.id, update.effective_user.id)
+    return ConversationHandler.END
+
+
+async def add_hw_no_due(update, context):
+    query = update.callback_query
+    await query.answer()
+    task = context.user_data.get('hw_task', '')
+    photo_id = context.user_data.get('hw_final_photo_id')
+    photos = [photo_id] if photo_id else []
+    new_id = await asyncio.to_thread(
+        db.add_task_db, "", task, None, photos
+    )
+    if new_id:
         try:
-            return datetime.strptime(text, fmt).date()
-        except ValueError:
+            await query.edit_message_text("✅ Добавлено (без срока).")
+        except Exception:
+            pass
+    else:
+        try:
+            await query.edit_message_text("❌ Ошибка.")
+        except Exception:
+            pass
+    context.user_data.clear()
+    await _show_hw_view_message(context.bot, update.effective_chat.id, update.effective_user.id)
+    return ConversationHandler.END
+
+
+async def del_hw_list(update, context):
+    query = update.callback_query
+    await query.answer()
+    if not await _require_admin(update):
+        return
+    tasks = await asyncio.to_thread(db.get_all_tasks_db)
+    if not tasks:
+        await query.edit_message_text("📭 Нет ДЗ.", reply_markup=kb.back_button("a_hw_view"))
+        return
+    lines = ["Выберите ДЗ для удаления:\n"]
+    for idx, (db_id, subject, task, due_date, photos, _) in enumerate(tasks, start=1):
+        marker = "📎 " if photos else ""
+        body = task if task else subject
+        due_str = f" ({due_date})" if due_date else ""
+        lines.append(f"{idx}️⃣ {marker}{body}{due_str}")
+    await query.edit_message_text("\n".join(lines), reply_markup=kb.delete_hw_kb(tasks))
+
+
+async def del_hw_pick(update, context):
+    query = update.callback_query
+    await query.answer()
+    if not await _require_admin(update):
+        return
+    task_id = int(query.data.split("_")[1])
+    context.user_data['pending_hw_id'] = task_id
+    await query.edit_message_text("⚠️ Точно удалить?", reply_markup=kb.confirm_kb("delhw", task_id))
+
+
+async def del_hw_confirm(update, context):
+    query = update.callback_query
+    await query.answer()
+    if not await _require_admin(update):
+        return
+    task_id = context.user_data.pop('pending_hw_id', None)
+    if task_id is not None:
+        await asyncio.to_thread(db.delete_task_db, task_id)
+    await query.edit_message_text("🗑 Удалено.")
+    await _show_hw_view_message(context.bot, update.effective_chat.id, update.effective_user.id)
+
+
+async def broadcast_hw_to_subscribers(update, context):
+    query = update.callback_query
+    await query.answer()
+    if not await _require_admin(update):
+        return
+    tasks = await asyncio.to_thread(db.get_all_tasks_db)
+    if not tasks:
+        await query.answer("Нет ДЗ для рассылки.", show_alert=True)
+        return
+    user_ids = await asyncio.to_thread(db.get_user_ids_with_notify, "homework")
+    if not user_ids:
+        await query.answer("Нет подписанных.", show_alert=True)
+        return
+    await query.edit_message_text("⏳ Рассылаю...")
+    sent = 0
+    failed = 0
+    for uid in user_ids:
+        try:
+            await context.bot.send_message(chat_id=uid, text="📚 ДЗ обновлено! Посмотрите список.")
+            sent += 1
+        except Exception:
+            failed += 1
+        await asyncio.sleep(0.05)
+    await query.message.reply_text(f"✅ Разослано {sent}. ❌ Не доставлено {failed}.")
+    await _show_hw_view_message(context.bot, update.effective_chat.id, update.effective_user.id)
+
+
+# === ОСТАЛЬНОЕ (ann, admins, extra, settings, schedule) ===
+async def ann_menu(update, context):
+    query = update.callback_query
+    await query.answer()
+    if not await _require_admin(update):
+        return
+    await query.edit_message_text("📢 Объявления:", reply_markup=kb.ann_menu_kb())
+
+
+async def admins_menu(update, context):
+    query = update.callback_query
+    await query.answer()
+    if not await _require_admin(update):
+        return
+    await query.edit_message_text("👑 Админы:", reply_markup=kb.admins_menu_kb())
+
+
+async def extra_menu(update, context):
+    query = update.callback_query
+    await query.answer()
+    if not await _require_admin(update):
+        return
+    await query.edit_message_text("📚 Доп. занятия:", reply_markup=kb.extra_admin_menu_kb())
+
+
+async def bot_settings_menu(update, context):
+    query = update.callback_query
+    await query.answer()
+    if not await _require_admin(update):
+        return
+    await query.edit_message_text("⚙️ Настройки бота:", reply_markup=kb.bot_settings_kb())
+
+
+async def shift_menu(update, context):
+    query = update.callback_query
+    await query.answer()
+    if not await _require_admin(update):
+        return
+    current = await asyncio.to_thread(db.get_current_shift)
+    await query.edit_message_text(
+        f"🔁 Текущая смена: {current}. Выберите смену:", reply_markup=kb.shift_choice_kb()
+    )
+
+
+async def shift_set(update, context):
+    query = update.callback_query
+    await query.answer()
+    if not await _require_admin(update):
+        return
+    shift = query.data.split("_")[1]
+    await asyncio.to_thread(db.set_current_shift, shift)
+    await query.edit_message_text(f"✅ Смена изменена на {shift} смену.", reply_markup=kb.admin_panel_kb())
+
+
+async def add_ann_start(update, context):
+    query = update.callback_query
+    await query.answer()
+    if not await _require_admin(update):
+        return ConversationHandler.END
+    try:
+        await query.message.delete()
+    except Exception:
+        pass
+    await context.bot.send_message(
+        chat_id=update.effective_chat.id,
+        text="📝 Введите текст объявления. После можно прикрепить фото.",
+        reply_markup=kb.cancel_button(),
+    )
+    return ANN_TEXT
+
+
+async def add_ann_text(update, context):
+    context.user_data['ann_text'] = update.message.text.strip()
+    await update.message.reply_text(
+        f"📝 Текст:\n{context.user_data['ann_text']}\n\nПришлите фото или «Пропустить».",
+        reply_markup=kb.ann_skip_photo_kb(),
+    )
+    return ANN_PHOTO
+
+
+async def add_ann_photo(update, context):
+    caption = (update.message.caption or "").strip() if update.message else ""
+    photo_id = None
+    if update.message and update.message.photo:
+        photo_id = update.message.photo[-1].file_id
+    ann_text = caption if caption else context.user_data.get('ann_text', '')
+    context.user_data['ann_text'] = ann_text
+    context.user_data['ann_photo_id'] = photo_id
+    preview_text = ann_text if ann_text else "(без текста)"
+    await update.message.reply_text(
+        f"📢 Текст:\n{preview_text}\n📎 Фото\n\nРазослать подписанным?",
+        reply_markup=kb.announcement_confirm_kb(),
+    )
+    return ANN_CONFIRM
+
+
+async def add_ann_skip_photo(update, context):
+    query = update.callback_query
+    await query.answer()
+    context.user_data['ann_photo_id'] = None
+    text = context.user_data.get('ann_text', '')
+    await query.edit_message_text(
+        f"📢 Текст:\n{text}\n\nРазослать подписанным?",
+        reply_markup=kb.announcement_confirm_kb(),
+    )
+    return ANN_CONFIRM
+
+
+async def add_ann_change_photo(update, context):
+    query = update.callback_query
+    await query.answer()
+    context.user_data.pop('ann_photo_id', None)
+    await query.edit_message_text("Пришлите фото:", reply_markup=kb.cancel_button())
+    return ANN_PHOTO
+
+
+async def _broadcast_to_kind(bot, kind, text):
+    user_ids = await asyncio.to_thread(db.get_user_ids_with_notify, kind)
+    sent, failed = 0, 0
+    for uid in user_ids:
+        try:
+            await bot.send_message(chat_id=uid, text=text)
+            sent += 1
+        except Exception:
+            failed += 1
+        await asyncio.sleep(0.05)
+    return sent, failed
+
+
+async def add_ann_confirm(update, context):
+    query = update.callback_query
+    await query.answer()
+    text = context.user_data.get('ann_text', '')
+    photo_id = context.user_data.get('ann_photo_id')
+    author_id = update.effective_user.id
+    save_text = text if text else ""
+    await asyncio.to_thread(db.add_announcement_db, save_text, author_id, False, photo_id)
+    if query.data == "ann_send_yes":
+        broadcast_text = f"📢 {save_text}"
+        if photo_id:
+            broadcast_text += "\n\n📎 Вложение"
+        await query.edit_message_text("⏳ Рассылаю...")
+        sent, failed = await _broadcast_to_kind(context.bot, "announcements", broadcast_text)
+        await query.message.reply_text(f"✅ Разослано {sent}. ❌ Не доставлено {failed}.")
+    else:
+        await query.edit_message_text("✅ Сохранено.")
+    context.user_data.clear()
+    await query.message.reply_text("👑 Админ-панель", reply_markup=kb.admin_panel_kb())
+    return ConversationHandler.END
+
+
+async def del_ann_list(update, context):
+    query = update.callback_query
+    await query.answer()
+    if not await _require_admin(update):
+        return
+    anns = await asyncio.to_thread(db.get_active_announcements)
+    if not anns:
+        await query.edit_message_text("📭 Нет.", reply_markup=kb.admin_panel_kb())
+        return
+    lines = ["Удалить:\n"]
+    for idx, item in enumerate(anns, start=1):
+        ann_id, text, created_at, is_note, photo_id = item
+        prefix = "📝 " if is_note else ("📎 " if photo_id else "")
+        date_part = created_at.split(" ")[0] if created_at else ""
+        short = text[:28] + "..." if len(text) > 28 else text
+        lines.append(f"{idx}️⃣ {prefix}{date_part}: {short or '(без текста)'}")
+    await query.edit_message_text("\n".join(lines), reply_markup=kb.delete_ann_kb(anns))
+
+
+async def del_ann_pick(update, context):
+    query = update.callback_query
+    await query.answer()
+    if not await _require_admin(update):
+        return
+    ann_id = int(query.data.split("_")[1])
+    context.user_data['pending_ann_id'] = ann_id
+    await query.edit_message_text("⚠️ Удалить?", reply_markup=kb.confirm_kb("delann", ann_id))
+
+
+async def del_ann_confirm(update, context):
+    query = update.callback_query
+    await query.answer()
+    if not await _require_admin(update):
+        return
+    ann_id = context.user_data.pop('pending_ann_id', None)
+    if ann_id is not None:
+        await asyncio.to_thread(db.deactivate_announcement_db, ann_id)
+    await query.edit_message_text("🗑 Удалено.", reply_markup=kb.admin_panel_kb())
+
+
+async def add_replnote_start(update, context):
+    query = update.callback_query
+    await query.answer()
+    if not await _require_admin(update):
+        return ConversationHandler.END
+    await query.edit_message_text("📝 Текст подписи для раздела «Замены»:", reply_markup=kb.cancel_button())
+    return REPLNOTE_TEXT
+
+
+async def add_replnote_text(update, context):
+    text = update.message.text.strip()
+    context.user_data['replnote_text'] = text
+    await update.message.reply_text(f"📝 Текст:\n{text}\n\nСохранить?", reply_markup=kb.replnote_confirm_kb())
+    return REPLNOTE_CONFIRM
+
+
+async def add_replnote_confirm(update, context):
+    query = update.callback_query
+    await query.answer()
+    if query.data == "replnote_save_yes":
+        text = context.user_data.get('replnote_text', '')
+        await asyncio.to_thread(db.add_announcement_db, text, update.effective_user.id, True)
+        await query.edit_message_text("✅ Сохранено.")
+    else:
+        await query.edit_message_text("❌ Отменено.")
+    context.user_data.clear()
+    await query.message.reply_text("👑 Админ-панель", reply_markup=kb.admin_panel_kb())
+    return ConversationHandler.END
+
+
+async def add_admin_start(update, context):
+    query = update.callback_query
+    await query.answer()
+    if not await _require_admin(update):
+        return ConversationHandler.END
+    await query.edit_message_text("Отправьте числовой Telegram ID:", reply_markup=kb.cancel_button())
+    return ADMIN_ID
+
+
+async def add_admin_id(update, context):
+    text = update.message.text.strip()
+    if not text.isdigit():
+        await update.message.reply_text("❌ ID должен быть числом.", reply_markup=kb.cancel_button())
+        return ADMIN_ID
+    context.user_data['new_admin_id'] = int(text)
+    await update.message.reply_text("Введите имя:", reply_markup=kb.cancel_button())
+    return ADMIN_NAME
+
+
+async def add_admin_name(update, context):
+    name = update.message.text.strip()
+    user_id = context.user_data.get('new_admin_id')
+    await asyncio.to_thread(db.add_admin_to_db, user_id, f"id{user_id}", name)
+    context.user_data.clear()
+    await update.message.reply_text("✅ Готово.")
+    await update.message.reply_text("👑 Админ-панель", reply_markup=kb.admin_panel_kb())
+    return ConversationHandler.END
+
+
+async def del_admin_list(update, context):
+    query = update.callback_query
+    await query.answer()
+    if not await _require_admin(update):
+        return
+    admins = await asyncio.to_thread(db.get_all_admins)
+    buttons = kb.delete_admin_kb(admins, update.effective_user.id, INITIAL_ADMIN_ID)
+    if not buttons:
+        await query.edit_message_text("Нет.", reply_markup=kb.admin_panel_kb())
+        return
+    await query.edit_message_text("Удалить админа:", reply_markup=buttons)
+
+
+async def del_admin_pick(update, context):
+    query = update.callback_query
+    await query.answer()
+    if not await _require_admin(update):
+        return
+    target_id = int(query.data.split("_")[1])
+    if target_id == INITIAL_ADMIN_ID:
+        await query.answer("❌ Нельзя.", show_alert=True)
+        return
+    if target_id == update.effective_user.id:
+        await query.answer("❌ Нельзя.", show_alert=True)
+        return
+    context.user_data['pending_admin_id'] = target_id
+    await query.edit_message_text(f"Удалить админа {target_id}?", reply_markup=kb.confirm_kb("deladmin", target_id))
+
+
+async def del_admin_confirm(update, context):
+    query = update.callback_query
+    await query.answer()
+    if not await _require_admin(update):
+        return
+    target_id = context.user_data.pop('pending_admin_id', None)
+    if target_id is not None:
+        await asyncio.to_thread(db.remove_admin_by_user_id, target_id)
+    await query.edit_message_text("✅ Удалён.", reply_markup=kb.admin_panel_kb())
+
+
+async def view_admins(update, context):
+    query = update.callback_query
+    await query.answer()
+    if not await _require_admin(update):
+        return
+    admins = await asyncio.to_thread(db.get_all_admins)
+    if not admins:
+        await query.edit_message_text("📭 Пусто.", reply_markup=kb.back_button("users_menu"))
+        return
+    lines = ["Админы:\n"]
+    for idx, (user_id, username, name) in enumerate(admins, start=1):
+        lines.append(f"{idx}️⃣ {name} (ID: {user_id})")
+    await query.edit_message_text("\n".join(lines), reply_markup=kb.back_button("users_menu"))
+
+
+async def users_menu(update, context):
+    query = update.callback_query
+    await query.answer()
+    if not await _require_admin(update):
+        return
+    context.user_data['viewing_banned'] = False
+    banned_count = len(await asyncio.to_thread(db.get_all_banned_users))
+    await query.edit_message_text(
+        "👥 Пользователи:",
+        reply_markup=kb.users_menu_kb(show_banned=banned_count > 0)
+    )
+
+
+async def view_users_list(update, context):
+    query = update.callback_query
+    await query.answer()
+    if not await _require_admin(update):
+        return
+    context.user_data['viewing_banned'] = False
+    users = await asyncio.to_thread(db.get_all_active_users)
+    if not users:
+        await query.edit_message_text("📭 Нет.", reply_markup=kb.back_button("users_menu"))
+        return
+    await query.edit_message_text(
+        f"👤 Пользователи ({len(users)}):\n\nНажми на юзера для действий.",
+        reply_markup=kb.users_paginated_kb(users, page=0)
+    )
+
+
+async def view_admins_list(update, context):
+    query = update.callback_query
+    await query.answer()
+    if not await _require_admin(update):
+        return
+    context.user_data['viewing_banned'] = False
+    admins = await asyncio.to_thread(db.get_all_admins)
+    if not admins:
+        await query.edit_message_text("📭 Нет админов.", reply_markup=kb.back_button("users_menu"))
+        return
+    admin_rows = [(a[0], a[1], None, a[2], "") for a in admins]
+    await query.edit_message_text(
+        f"👑 Админы ({len(admins)}):\n\nНажми на админа для действий.",
+        reply_markup=kb.admins_only_paginated_kb(admin_rows, page=0)
+    )
+
+
+async def view_banned_list(update, context):
+    query = update.callback_query
+    await query.answer()
+    if not await _require_admin(update):
+        return
+    context.user_data['viewing_banned'] = True
+    banned = await asyncio.to_thread(db.get_all_banned_users)
+    if not banned:
+        await query.edit_message_text("🚫 Забаненных нет.", reply_markup=kb.back_button("users_menu"))
+        return
+    rows = [(b[0], b[1], b[2], b[3]) for b in banned]
+    await query.edit_message_text(
+        f"🚫 Забаненные ({len(banned)}):\n\nНажми чтобы разбанить.",
+        reply_markup=kb.banned_paginated_kb(rows, page=0)
+    )
+
+
+async def users_paginated(update, context):
+    query = update.callback_query
+    await query.answer()
+    if not await _require_admin(update):
+        return
+    page = int(query.data.split("_")[1])
+    if context.user_data.get('viewing_banned'):
+        banned = await asyncio.to_thread(db.get_all_banned_users)
+        rows = [(b[0], b[1], b[2], b[3]) for b in banned]
+        await query.edit_message_text(
+            f"🚫 Забаненные (стр. {page + 1}):",
+            reply_markup=kb.banned_paginated_kb(rows, page=page)
+        )
+    else:
+        users = await asyncio.to_thread(db.get_all_active_users)
+        await query.edit_message_text(
+            f"👤 Пользователи (стр. {page + 1}):",
+            reply_markup=kb.users_paginated_kb(users, page=page)
+        )
+
+
+async def user_action_menu(update, context):
+    query = update.callback_query
+    await query.answer()
+    if not await _require_admin(update):
+        return
+    target_id = int(query.data.split("_")[1])
+    users = await asyncio.to_thread(db.get_all_active_users)
+    target = next((u for u in users if u[0] == target_id), None)
+    if not target:
+        await query.answer("❌ Не найден.", show_alert=True)
+        return
+    is_admin_user = await asyncio.to_thread(db.is_admin, target_id)
+    name = _pick_display_name(target)
+    text = (
+        f"{'👑' if is_admin_user else '👤'} <b>{name}</b>\n"
+        f"Telegram: @{target[1] or '—'}\n"
+        f"ID: {target_id}\n"
+        f"Админ: {'✅' if is_admin_user else '❌'}\n"
+        f"Регистрация: {target[4].split(' ')[0] if target[4] else '—'}"
+    )
+    await query.edit_message_text(text, parse_mode='HTML', reply_markup=kb.user_action_kb(target_id, is_admin_user))
+
+
+async def user_toggle_admin(update, context):
+    query = update.callback_query
+    await query.answer()
+    if not await _require_admin(update):
+        return
+    target_id = int(query.data.split("_")[1])
+    if target_id == INITIAL_ADMIN_ID:
+        await query.answer("❌ Нельзя создателя.", show_alert=True)
+        return
+    if target_id == update.effective_user.id:
+        await query.answer("❌ Нельзя себя.", show_alert=True)
+        return
+    is_admin_user = await asyncio.to_thread(db.is_admin, target_id)
+    if is_admin_user:
+        await asyncio.to_thread(db.remove_admin_by_user_id, target_id)
+        await query.answer("✅ Снят с админа.", show_alert=True)
+    else:
+        users = await asyncio.to_thread(db.get_all_active_users)
+        target = next((u for u in users if u[0] == target_id), None)
+        name = _pick_display_name(target) if target else "Пользователь"
+        await asyncio.to_thread(db.add_admin_to_db, target_id, f"id{target_id}", name)
+        await query.answer("✅ Назначен админом.", show_alert=True)
+    users = await asyncio.to_thread(db.get_all_active_users)
+    target = next((u for u in users if u[0] == target_id), None)
+    if not target:
+        return
+    is_admin_user = await asyncio.to_thread(db.is_admin, target_id)
+    name = _pick_display_name(target)
+    text = (
+        f"{'👑' if is_admin_user else '👤'} <b>{name}</b>\n"
+        f"Telegram: @{target[1] or '—'}\n"
+        f"ID: {target_id}\n"
+        f"Админ: {'✅' if is_admin_user else '❌'}\n"
+        f"Регистрация: {target[4].split(' ')[0] if target[4] else '—'}"
+    )
+    await query.edit_message_text(text, parse_mode='HTML', reply_markup=kb.user_action_kb(target_id, is_admin_user))
+
+
+async def user_ban(update, context):
+    query = update.callback_query
+    await query.answer()
+    if not await _require_admin(update):
+        return
+    target_id = int(query.data.split("_")[1])
+    if target_id == INITIAL_ADMIN_ID:
+        await query.answer("❌ Нельзя создателя.", show_alert=True)
+        return
+    if target_id == update.effective_user.id:
+        await query.answer("❌ Нельзя себя.", show_alert=True)
+        return
+    await asyncio.to_thread(db.ban_user, target_id)
+    await query.answer("🚫 Забанен.", show_alert=True)
+    users = await asyncio.to_thread(db.get_all_active_users)
+    await query.edit_message_text(
+        f"👤 Пользователи ({len(users)}):",
+        reply_markup=kb.users_paginated_kb(users, page=0)
+    )
+
+
+async def user_unban(update, context):
+    query = update.callback_query
+    await query.answer()
+    if not await _require_admin(update):
+        return
+    target_id = int(query.data.split("_")[1])
+    context.user_data['pending_unban_id'] = target_id
+    banned = await asyncio.to_thread(db.get_all_banned_users)
+    target = next((b for b in banned if b[0] == target_id), None)
+    name = _pick_display_name(target) if target else "Юзер"
+    await query.edit_message_text(
+        f"Разбанить {name} (ID: {target_id})?",
+        reply_markup=kb.confirm_kb("unbanuser", target_id)
+    )
+
+
+async def user_unban_confirm(update, context):
+    query = update.callback_query
+    await query.answer()
+    if not await _require_admin(update):
+        return
+    target_id = context.user_data.pop('pending_unban_id', None)
+    if target_id is not None:
+        await asyncio.to_thread(db.unban_user, target_id)
+    await query.edit_message_text("✅ Разбанен.", reply_markup=kb.admin_panel_kb())
+
+
+async def extra_add_start(update, context):
+    query = update.callback_query
+    await query.answer()
+    if not await _require_admin(update):
+        return ConversationHandler.END
+    try:
+        await query.message.delete()
+    except Exception:
+        pass
+    await context.bot.send_message(
+        chat_id=update.effective_chat.id,
+        text="📝 Название предмета:",
+        reply_markup=kb.cancel_button(),
+    )
+    return EXTRA_NAME
+
+
+async def extra_add_name(update, context):
+    context.user_data['extra_subject'] = update.message.text.strip()
+    await update.message.reply_text(
+        "Пришлите фото или «Пропустить фото».",
+        reply_markup=kb.extra_skip_photo_kb(),
+    )
+    return EXTRA_CONTENT
+
+
+async def extra_add_content_photo(update, context):
+    subject = context.user_data.get('extra_subject', '')
+    description = (update.message.caption or "").strip() if update.message else ""
+    photo_id = None
+    if update.message and update.message.photo:
+        photo_id = update.message.photo[-1].file_id
+    await asyncio.to_thread(db.add_extra_class, subject, description or None, photo_id)
+    context.user_data.clear()
+    await update.message.reply_text("✅ Добавлено.")
+    await update.message.reply_text("👑 Админ-панель", reply_markup=kb.admin_panel_kb())
+    return ConversationHandler.END
+
+
+async def extra_add_content_text(update, context):
+    await update.message.reply_text(
+        "Пришлите фото или «Пропустить фото».",
+        reply_markup=kb.extra_skip_photo_kb(),
+    )
+    return EXTRA_CONTENT
+
+
+async def extra_add_skip_photo(update, context):
+    query = update.callback_query
+    await query.answer()
+    subject = context.user_data.get('extra_subject', '')
+    await asyncio.to_thread(db.add_extra_class, subject, None, None)
+    context.user_data.clear()
+    await query.message.reply_text("✅ Добавлено.")
+    await query.message.reply_text("👑 Админ-панель", reply_markup=kb.admin_panel_kb())
+    return ConversationHandler.END
+
+
+async def extra_del_list(update, context):
+    query = update.callback_query
+    await query.answer()
+    if not await _require_admin(update):
+        return
+    items = await asyncio.to_thread(db.get_active_extra_classes)
+    if not items:
+        await query.edit_message_text("📭 Нет.", reply_markup=kb.back_button("a_extra_menu"))
+        return
+    await query.edit_message_text("Удалить:", reply_markup=kb.extra_delete_kb(items))
+
+
+async def extra_del_pick(update, context):
+    query = update.callback_query
+    await query.answer()
+    if not await _require_admin(update):
+        return
+    item_id = int(query.data.split("_")[1])
+    rec = await asyncio.to_thread(db.get_extra_class, item_id)
+    if not rec:
+        await query.answer("❌ Не найдено.", show_alert=True)
+        return
+    context.user_data['pending_extra_id'] = item_id
+    await query.edit_message_text(f"Удалить «{rec[1]}»?", reply_markup=kb.confirm_kb("delextra", item_id))
+
+
+async def extra_del_confirm(update, context):
+    query = update.callback_query
+    await query.answer()
+    if not await _require_admin(update):
+        return
+    item_id = context.user_data.pop('pending_extra_id', None)
+    if item_id is not None:
+        await asyncio.to_thread(db.deactivate_extra_class, item_id)
+    await query.edit_message_text("🗑 Удалено.", reply_markup=kb.admin_panel_kb())
+
+
+async def extra_view(update, context):
+    query = update.callback_query
+    await query.answer()
+    if not await _require_admin(update):
+        return
+    items = await asyncio.to_thread(db.get_active_extra_classes)
+    if not items:
+        await query.edit_message_text("📭 Нет.", reply_markup=kb.back_button("a_extra_menu"))
+        return
+    lines = ["Активные:\n"]
+    for idx, (item_id, subject, description, photo_id, created_at) in enumerate(items, start=1):
+        date_part = created_at.split(" ")[0] if created_at else ""
+        marker = "📎" if photo_id else ""
+        lines.append(f"{idx}️⃣ {marker}{subject} ({date_part})")
+    await query.edit_message_text("\n".join(lines), reply_markup=kb.back_button("a_extra_menu"))
+
+
+async def broadcast_extra_class(update, context):
+    query = update.callback_query
+    await query.answer()
+    if not await _require_admin(update):
+        return
+    items = await asyncio.to_thread(db.get_active_extra_classes)
+    if not items:
+        await query.answer("Нет.", show_alert=True)
+        return
+    last = items[0]
+    item_id, subject, description, photo_id, _ = last
+    user_ids = await asyncio.to_thread(db.get_user_ids_with_notify, "extra_classes")
+    if not user_ids:
+        await query.answer("Нет подписанных.", show_alert=True)
+        return
+    await query.edit_message_text("⏳ Рассылаю...")
+    sent = 0
+    failed = 0
+    for uid in user_ids:
+        try:
+            if photo_id:
+                await context.bot.send_photo(chat_id=uid, photo=photo_id, caption=f"📚 Новое: <b>{subject}</b>", parse_mode='HTML')
+            else:
+                body = f"📚 Новое: <b>{subject}</b>"
+                if description:
+                    body += f"\n\n{description}"
+                await context.bot.send_message(chat_id=uid, text=body, parse_mode='HTML')
+            sent += 1
+        except Exception:
+            failed += 1
+        await asyncio.sleep(0.05)
+    await query.message.reply_text(f"✅ Разослано {sent}. ❌ Не доставлено {failed}.")
+    await context.bot.send_message(chat_id=update.effective_chat.id, text="👑 Админ-панель", reply_markup=kb.admin_panel_kb())
+
+
+async def set_group_start(update, context):
+    query = update.callback_query
+    await query.answer()
+    if not await _require_admin(update):
+        return ConversationHandler.END
+    try:
+        await query.message.delete()
+    except Exception:
+        pass
+    current = await asyncio.to_thread(db.get_group_name)
+    await context.bot.send_message(
+        chat_id=update.effective_chat.id,
+        text=f"Сейчас: <b>{current}</b>\n\nВведите новое:",
+        parse_mode='HTML',
+        reply_markup=kb.cancel_button(),
+    )
+    return SET_GROUP
+
+
+async def set_group_finish(update, context):
+    name = update.message.text.strip()
+    loading = await update.message.reply_text("⏳ Сохраняю...")
+    await asyncio.to_thread(db.set_group_name, name)
+    try:
+        await loading.delete()
+    except Exception:
+        pass
+    await update.message.reply_text(f"✅ «{name}».")
+    context.user_data.clear()
+    await update.message.reply_text("👑 Админ-панель", reply_markup=kb.admin_panel_kb())
+    return ConversationHandler.END
+
+
+async def set_bot_name_start(update, context):
+    query = update.callback_query
+    await query.answer()
+    if not await _require_admin(update):
+        return ConversationHandler.END
+    try:
+        await query.message.delete()
+    except Exception:
+        pass
+    current = await asyncio.to_thread(db.get_bot_display_name)
+    await context.bot.send_message(
+        chat_id=update.effective_chat.id,
+        text=f"Сейчас: <b>{current}</b>\n\nВведите новое:",
+        parse_mode='HTML',
+        reply_markup=kb.cancel_button(),
+    )
+    return SET_BOT_NAME
+
+
+async def set_bot_name_finish(update, context):
+    name = update.message.text.strip()
+    loading = await update.message.reply_text("⏳ Сохраняю...")
+    await asyncio.to_thread(db.set_bot_display_name, name)
+    try:
+        await context.bot.set_my_name(name=name)
+    except Exception:
+        pass
+    try:
+        await asyncio.to_thread(sched_img.regenerate_all_cached_images)
+    except Exception:
+        pass
+    try:
+        await loading.delete()
+    except Exception:
+        pass
+    await update.message.reply_text("✅ Готово.")
+    context.user_data.clear()
+    await update.message.reply_text("👑 Админ-панель", reply_markup=kb.admin_panel_kb())
+    return ConversationHandler.END
+
+
+async def set_bot_photo_start(update, context):
+    query = update.callback_query
+    await query.answer()
+    if not await _require_admin(update):
+        return ConversationHandler.END
+    try:
+        await query.message.delete()
+    except Exception:
+        pass
+    await context.bot.send_message(
+        chat_id=update.effective_chat.id,
+        text="⚠️ Смена аватарки через API невозможна. Используйте @BotFather → /setuserpic.",
+        reply_markup=kb.cancel_button(),
+    )
+    return SET_BOT_PHOTO
+
+
+async def set_bot_photo_finish(update, context):
+    await update.message.reply_text("⚠️ Сделайте вручную.")
+    context.user_data.clear()
+    await update.message.reply_text("👑 Админ-панель", reply_markup=kb.admin_panel_kb())
+    return ConversationHandler.END
+
+
+async def edit_schedule_menu(update, context):
+    query = update.callback_query
+    await query.answer()
+    if not await _require_admin(update):
+        return
+    await query.edit_message_text("⚙️ Расписание:", reply_markup=kb.schedule_edit_menu_kb())
+
+
+async def force_broadcast_replacements_btn(update, context):
+    query = update.callback_query
+    await query.answer()
+    if not await _require_admin(update):
+        return
+    await query.edit_message_text("⏳ Рассылаю...")
+    try:
+        sent = await sched.force_broadcast_replacements()
+        if sent < 0:
+            await query.edit_message_text("❌ Ошибка.", reply_markup=kb.schedule_edit_menu_kb())
+        else:
+            await query.edit_message_text(f"✅ Разослано {sent}.", reply_markup=kb.schedule_edit_menu_kb())
+    except Exception:
+        await query.edit_message_text("❌ Ошибка.", reply_markup=kb.schedule_edit_menu_kb())
+
+
+async def sched_upload_start(update, context):
+    query = update.callback_query
+    await query.answer()
+    if not await _require_admin(update):
+        return ConversationHandler.END
+    await query.edit_message_text("📤 Заполните и пришлите обратно:", reply_markup=kb.cancel_button())
+    template_path = os.path.join(os.path.dirname(__file__), "assets", "schedule_template.xlsx")
+    try:
+        with open(template_path, "rb") as f:
+            await context.bot.send_document(
+                chat_id=update.effective_chat.id, document=f,
+                filename="Формат_Расписания.xlsx",
+                caption="Числитель слева, Знаменатель справа.",
+            )
+    except FileNotFoundError:
+        await context.bot.send_message(chat_id=update.effective_chat.id, text="⚠️ Шаблон не найден.")
+    return SCHED_UPLOAD_TEXT
+
+
+def _parse_schedule_xlsx(file_bytes):
+    import openpyxl
+    wb = openpyxl.load_workbook(io.BytesIO(file_bytes), data_only=True)
+    ws = wb.active
+    rows = list(ws.iter_rows(values_only=True))
+    result = {}
+    errors = []
+    current_day = None
+    for row_idx, row in enumerate(rows, start=1):
+        if row is None or all(c is None for c in row):
             continue
-    return None
+        cells = list(row) + [None] * (7 - len(row)) if len(row) < 7 else list(row[:7])
+        col0 = cells[0]
+        if row_idx <= 2:
+            continue
+        if isinstance(col0, str):
+            day_norm = col0.strip().lower()
+            if day_norm in WEEKDAYS_RU:
+                current_day = WEEKDAYS_RU.index(day_norm)
+                result.setdefault(("Числитель", current_day), [])
+                result.setdefault(("Знаменатель", current_day), [])
+            continue
+        if current_day is None:
+            continue
+        try:
+            pair_num = int(col0)
+        except (TypeError, ValueError):
+            errors.append(f"Строка {row_idx}")
+            continue
+        subj_num, teach_num, room_num = cells[1], cells[2], cells[3]
+        subj_den, teach_den, room_den = cells[4], cells[5], cells[6]
+        if subj_num:
+            result.setdefault(("Числитель", current_day), []).append({
+                "pair_number": pair_num, "subject": str(subj_num).strip(),
+                "teacher": str(teach_num).strip() if teach_num else "",
+                "room": str(room_num).strip() if room_num else "",
+            })
+        if subj_den:
+            result.setdefault(("Знаменатель", current_day), []).append({
+                "pair_number": pair_num, "subject": str(subj_den).strip(),
+                "teacher": str(teach_den).strip() if teach_den else "",
+                "room": str(room_den).strip() if room_den else "",
+            })
+    return result, errors
 
 
-def format_due_date_for_display(date_obj):
-    """'Сегодня', 'Завтра', 'Послезавтра', 'В четверг'."""
-    from datetime import date, timedelta
-    today = date.today()
-    if not date_obj:
-        return "Без срока"
-    delta_days = (date_obj - today).days
-    if delta_days == 0:
-        return "Сегодня"
-    if delta_days == 1:
-        return "Завтра"
-    if delta_days == 2:
-        return "Послезавтра"
-    if delta_days < 0:
-        return "Без срока"
-    weekdays = ["понедельник", "вторник", "среда", "четверг", "пятница", "суббота", "воскресенье"]
-    target_wd = date_obj.weekday()
-    today_wd = today.weekday()
-    days_until_target = (target_wd - today_wd) % 7
-    if days_until_target == 0:
-        days_until_target = 7
-    if days_until_target <= 3:
-        return f"В {weekdays[target_wd]}"
-    if days_until_target <= 7:
-        return f"В {weekdays[target_wd]}"
-    second_target = (today_wd + days_until_target + 7) % 7
-    return f"В следующий {weekdays[second_target]}"
+async def sched_upload_document(update, context):
+    document = update.message.document
+    if not document or not document.file_name.lower().endswith(".xlsx"):
+        await update.message.reply_text("❌ Нужен .xlsx", reply_markup=kb.cancel_button())
+        return SCHED_UPLOAD_TEXT
+    tg_file = await document.get_file()
+    file_bytes = bytes(await tg_file.download_as_bytearray())
+    try:
+        parsed, errors = await asyncio.to_thread(_parse_schedule_xlsx, file_bytes)
+    except Exception:
+        await update.message.reply_text("❌ Ошибка чтения.", reply_markup=kb.cancel_button())
+        return SCHED_UPLOAD_TEXT
+    if not parsed:
+        await update.message.reply_text("❌ Нет данных.", reply_markup=kb.cancel_button())
+        return SCHED_UPLOAD_TEXT
+    context.user_data['pending_schedule'] = parsed
+    await update.message.reply_text(
+        f"Найдено дней: {len(parsed)}. Применить?",
+        reply_markup=kb.confirm_kb("schedupload", "0")
+    )
+    return ConversationHandler.END
+
+
+async def sched_upload_confirm(update, context):
+    query = update.callback_query
+    await query.answer()
+    parsed = context.user_data.pop('pending_schedule', None)
+    if not parsed:
+        try:
+            await query.edit_message_text("❌ Данные потеряны.", reply_markup=kb.bot_settings_kb())
+        except Exception:
+            pass
+        return
+    try:
+        await query.delete_message()
+    except Exception:
+        pass
+    loading = await context.bot.send_message(chat_id=update.effective_chat.id, text="⏳ Загружаю...")
+    try:
+        for (week_type, day_idx), entries in parsed.items():
+            await asyncio.to_thread(db.replace_day_schedule, week_type, day_idx, entries)
+        await asyncio.to_thread(sched_img.regenerate_all_cached_images)
+    except Exception:
+        try:
+            await loading.delete()
+        except Exception:
+            pass
+        await context.bot.send_message(chat_id=update.effective_chat.id, text="❌ Ошибка.", reply_markup=kb.bot_settings_kb())
+        return
+    try:
+        await loading.delete()
+    except Exception:
+        pass
+    await context.bot.send_message(chat_id=update.effective_chat.id, text="✅ Обновлено.", reply_markup=kb.bot_settings_kb())
+
+
+async def del_all_day_menu(update, context):
+    query = update.callback_query
+    await query.answer()
+    if not await _require_admin(update):
+        return
+    await query.edit_message_text("Удалить ВСЕ пары на день:", reply_markup=kb.delete_all_day_kb())
+
+
+async def sched_by_day_start(update, context):
+    query = update.callback_query
+    await query.answer()
+    if not await _require_admin(update):
+        return
+    await query.edit_message_text("День:", reply_markup=kb.weekday_choice_kb())
+
+
+async def sched_day_chosen(update, context):
+    query = update.callback_query
+    await query.answer()
+    day_idx = int(query.data.split("_")[1])
+    await query.edit_message_text(
+        f"{WEEKDAYS_RU[day_idx].capitalize()}. Тип недели:", reply_markup=kb.week_type_kb(day_idx)
+    )
+
+
+async def sched_delete_all_day(update, context):
+    query = update.callback_query
+    await query.answer()
+    day_idx = int(query.data.split("_")[1])
+    await asyncio.to_thread(db.delete_all_pairs_for_day, day_idx)
+    await asyncio.to_thread(sched_img.regenerate_all_cached_images)
+    await query.edit_message_text(f"🗑 Удалено.", reply_markup=kb.bot_settings_kb())
+
+
+async def sched_week_type_chosen(update, context):
+    query = update.callback_query
+    await query.answer()
+    _, week_type, day_idx = query.data.split("_")
+    day_idx = int(day_idx)
+    pairs = await asyncio.to_thread(db.get_base_schedule, week_type, day_idx)
+    if not pairs:
+        text = f"{week_type}, {WEEKDAYS_RU[day_idx]}: пар пока нет."
+    else:
+        lines = [f"{week_type}, {WEEKDAYS_RU[day_idx]}:\n"]
+        for num, info in sorted(pairs.items()):
+            lines.append(f"{num}. {info['subject']} ({info['teacher']}) — {info['room']}")
+        text = "\n".join(lines)
+    await query.edit_message_text(text, reply_markup=kb.pair_choice_kb(pairs, week_type, day_idx))
+
+
+async def sched_pair_chosen(update, context):
+    query = update.callback_query
+    await query.answer()
+    _, week_type, day_idx, pair_num = query.data.split("_")
+    await query.edit_message_text(
+        f"Пара {pair_num} ({week_type}, {WEEKDAYS_RU[int(day_idx)]}):",
+        reply_markup=kb.pair_field_kb(week_type, int(day_idx), int(pair_num)),
+    )
+
+
+async def sched_new_pair(update, context):
+    query = update.callback_query
+    await query.answer()
+    _, week_type, day_idx = query.data.split("_")
+    day_idx = int(day_idx)
+    pairs = await asyncio.to_thread(db.get_base_schedule, week_type, day_idx)
+    next_pair = max(pairs.keys(), default=0) + 1
+    context.user_data['sched_edit'] = {
+        "week_type": week_type, "day_idx": day_idx, "pair_num": next_pair, "field": "subject",
+        "subject": "", "teacher": "", "room": "",
+    }
+    await query.edit_message_text(f"Предмет для пары {next_pair}:", reply_markup=kb.cancel_button())
+    return SCHED_FIELD_VALUE
+
+
+async def sched_delete_pair(update, context):
+    query = update.callback_query
+    await query.answer()
+    _, week_type, day_idx, pair_num = query.data.split("_")
+    await asyncio.to_thread(db.delete_pair, week_type, int(day_idx), int(pair_num))
+    await asyncio.to_thread(sched_img.regenerate_all_cached_images)
+    await query.answer("Удалено", show_alert=True)
+    pairs = await asyncio.to_thread(db.get_base_schedule, week_type, int(day_idx))
+    lines = [f"{week_type}, {WEEKDAYS_RU[int(day_idx)]}:\n"]
+    for num, info in sorted(pairs.items()):
+        lines.append(f"{num}. {info['subject']} ({info['teacher']}) — {info['room']}")
+    await query.edit_message_text("\n".join(lines) or "Пар пока нет.",
+                                  reply_markup=kb.pair_choice_kb(pairs, week_type, int(day_idx)))
+
+
+async def sched_field_chosen(update, context):
+    query = update.callback_query
+    await query.answer()
+    _, field, week_type, day_idx, pair_num = query.data.split("_")
+    context.user_data['sched_edit'] = {
+        "week_type": week_type, "day_idx": int(day_idx), "pair_num": int(pair_num), "field": field,
+    }
+    field_names = {"subject": "предмет", "teacher": "преподавателя", "room": "аудиторию"}
+    await query.edit_message_text(f"Введите ({field_names[field]}):", reply_markup=kb.cancel_button())
+    return SCHED_FIELD_VALUE
+
+
+async def sched_field_value(update, context):
+    value = update.message.text.strip()
+    edit = context.user_data.get('sched_edit', {})
+    week_type, day_idx, pair_num = edit.get('week_type'), edit.get('day_idx'), edit.get('pair_num')
+
+    if edit.get('field') in ('subject', 'teacher', 'room') and 'is_new' not in edit:
+        pairs_existing = await asyncio.to_thread(db.get_base_schedule, week_type, day_idx)
+        is_new_pair = pair_num not in pairs_existing
+        if is_new_pair and edit.get('subject', None) == "":
+            edit['subject'] = value
+            edit['field'] = 'teacher'
+            edit['is_new'] = True
+            context.user_data['sched_edit'] = edit
+            await update.message.reply_text("Преподаватель:", reply_markup=kb.cancel_button())
+            return SCHED_FIELD_VALUE
+
+    if edit.get('is_new'):
+        if edit['field'] == 'teacher':
+            edit['teacher'] = value
+            edit['field'] = 'room'
+            context.user_data['sched_edit'] = edit
+            await update.message.reply_text("Аудитория:", reply_markup=kb.cancel_button())
+            return SCHED_FIELD_VALUE
+        elif edit['field'] == 'room':
+            edit['room'] = value
+            await asyncio.to_thread(
+                db.upsert_pair, week_type, day_idx, pair_num, edit['subject'], edit['teacher'], edit['room']
+            )
+            await asyncio.to_thread(sched_img.regenerate_all_cached_images)
+            await update.message.reply_text(f"✅ Добавлено.")
+            context.user_data.pop('sched_edit', None)
+            await update.message.reply_text("⚙️ Настройки бота", reply_markup=kb.bot_settings_kb())
+            return ConversationHandler.END
+
+    pairs = await asyncio.to_thread(db.get_base_schedule, week_type, day_idx)
+    current = pairs.get(pair_num, {"subject": "", "teacher": "", "room": ""})
+    current[edit['field']] = value
+    await asyncio.to_thread(
+        db.upsert_pair, week_type, day_idx, pair_num, current['subject'], current['teacher'], current['room']
+    )
+    await asyncio.to_thread(sched_img.regenerate_all_cached_images)
+    await update.message.reply_text("✅ Обновлено.")
+    context.user_data.pop('sched_edit', None)
+    await update.message.reply_text("⚙️ Настройки бота", reply_markup=kb.bot_settings_kb())
+    return ConversationHandler.END
