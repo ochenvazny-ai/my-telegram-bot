@@ -143,8 +143,8 @@ def build_conversations():
         states={
             EXTRA_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, ha.extra_add_name)],
             EXTRA_CONTENT: [
-                MessageHandler(filters.PHOTO, ha.extra_add_content),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, ha.extra_add_content),
+                MessageHandler(filters.PHOTO, ha.extra_add_content_photo),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, ha.extra_add_content_text),
                 CallbackQueryHandler(ha.extra_add_skip_photo, pattern="^extra_skip_photo$"),
             ],
         },
