@@ -74,7 +74,6 @@ async def hw_menu(update, context):
     await query.answer()
     if not await _require_admin(update):
         return
-    # Новое поведение: сразу показываем список ДЗ + кнопки под ним
     await _show_hw_view(update, context)
 
 
@@ -83,11 +82,11 @@ async def _show_hw_view(update, context):
     query = update.callback_query
     tasks = await asyncio.to_thread(db.get_all_tasks_db)
     if not tasks:
-        text = "   ДЗ пока нет."
+        text = "📭 ДЗ пока нет."
     else:
         lines = ["📚 Список ДЗ:\n"]
         for idx, (db_id, task, due_date, photo_id, caption, _) in enumerate(tasks, start=1):
-            marker = "   " if photo_id else ""
+            marker = "📎 " if photo_id else ""
             body = caption if caption else task
             due_str = f" — до {due_date}" if due_date else ""
             lines.append(f"{idx}️⃣ {marker}{body}{due_str}")
@@ -103,7 +102,7 @@ async def _show_hw_view_message(context, chat_id, admin_user_id):
     else:
         lines = ["📚 Список ДЗ:\n"]
         for idx, (db_id, task, due_date, photo_id, caption, _) in enumerate(tasks, start=1):
-            marker = "   " if photo_id else ""
+            marker = "📎 " if photo_id else ""
             body = caption if caption else task
             due_str = f" — до {due_date}" if due_date else ""
             lines.append(f"{idx}️⃣ {marker}{body}{due_str}")
@@ -115,7 +114,6 @@ async def _show_hw_view_message(context, chat_id, admin_user_id):
 
 
 async def hw_view_back(update, context):
-    """Возврат к списку ДЗ из любого места."""
     query = update.callback_query
     await query.answer()
     if not await _require_admin(update):
@@ -123,26 +121,6 @@ async def hw_view_back(update, context):
     await _show_hw_view(update, context)
 
 
-async def hw_view_message(context, chat_id, admin_user_id):
-    """Вспомогательная — отправить список ДЗ."""
-    tasks = await asyncio.to_thread(db.get_all_tasks_db)
-    if not tasks:
-        text = "📭 ДЗ пока нет."
-    else:
-        lines = ["📚 Список ДЗ:\n"]
-        for idx, (db_id, task, due_date, photo_id, caption, _) in enumerate(tasks, start=1):
-            marker = "   " if photo_id else ""
-            body = caption if caption else task
-            due_str = f" — до {due_date}" if due_date else ""
-            lines.append(f"{idx}️⃣ {marker}{body}{due_str}")
-        text = "\n".join(lines)
-    await context.bot.send_message(
-        chat_id=chat_id, text=text,
-        reply_markup=kb.hw_admin_view_kb(has_tasks=bool(tasks))
-    )
-
-
-# === ДОБАВЛЕНИЕ ДЗ (текст + фото + подпись) ===
 async def add_hw_start(update, context):
     query = update.callback_query
     await query.answer()
@@ -157,14 +135,11 @@ async def add_hw_start(update, context):
 
 
 async def add_hw_text(update, context):
-    """Поймали либо текст, либо фото."""
-    # Если прислали фото
     if update.message and update.message.photo:
         photo_id = update.message.photo[-1].file_id
         caption = (update.message.caption or "").strip()
         context.user_data['hw_photo_id'] = photo_id
         if caption:
-            # Подпись сразу — сохраняем как есть, спросим срок
             context.user_data['hw_task'] = caption
             context.user_data.pop('hw_photo_id', None)
             context.user_data['hw_final_photo_id'] = photo_id
@@ -174,12 +149,11 @@ async def add_hw_text(update, context):
             )
             return HW_DUE
         else:
-            # Нет подписи — спрашиваем
             await update.message.reply_text(
-                "   Фото получено. Введите подпись (или «Без подписи»):",
+                "📎 Фото получено. Введите подпись (или «Без подписи»):",
                 reply_markup=kb.no_caption_button(),
             )
-            return HW_TEXT # остаёмся в этом состоянии    # Если текст
+            return HW_TEXT
     text = update.message.text.strip()
     if text and text != "-":
         context.user_data['hw_task'] = text
@@ -189,13 +163,11 @@ async def add_hw_text(update, context):
             reply_markup=kb.no_due_button(),
         )
         return HW_DUE
-
     await update.message.reply_text("⚠️ Не понимаю. Пришлите текст или фото.")
     return HW_TEXT
 
 
 async def add_hw_no_caption(update, context):
-    """Поймали текст после вопроса про подпись к фото."""
     text = update.message.text.strip()
     if text.lower() in ("без подписи", "пропустить", "-"):
         context.user_data['hw_task'] = ""
@@ -206,7 +178,6 @@ async def add_hw_no_caption(update, context):
             reply_markup=kb.no_due_button(),
         )
         return HW_DUE
-    # Иначе это подпись
     context.user_data['hw_task'] = text
     context.user_data['hw_final_photo_id'] = context.user_data.get('hw_photo_id')
     context.user_data.pop('hw_photo_id', None)
@@ -218,13 +189,10 @@ async def add_hw_no_caption(update, context):
 
 
 async def add_hw_due(update, context):
-    """Поймали срок (текст)."""
     text = update.message.text.strip()
     due_date = None if text in ("-", "Без срока", "без срока", "0") else text
-
     task = context.user_data.get('hw_task', '')
     photo_id = context.user_data.get('hw_final_photo_id')
-
     new_id = await asyncio.to_thread(
         db.add_task_db, task, due_date, photo_id, task if photo_id else None
     )
@@ -238,12 +206,10 @@ async def add_hw_due(update, context):
 
 
 async def add_hw_no_due(update, context):
-    """Нажата кнопка «Без срока»."""
     query = update.callback_query
     await query.answer()
     task = context.user_data.get('hw_task', '')
     photo_id = context.user_data.get('hw_final_photo_id')
-
     new_id = await asyncio.to_thread(
         db.add_task_db, task, None, photo_id, task if photo_id else None
     )
@@ -258,12 +224,10 @@ async def add_hw_no_due(update, context):
         except Exception:
             pass
     context.user_data.clear()
-    # Отправить список ДЗ
     await _show_hw_view_message(context.bot, update.effective_chat.id, update.effective_user.id)
     return ConversationHandler.END
 
 
-# === УДАЛЕНИЕ ДЗ ===
 async def del_hw_list(update, context):
     query = update.callback_query
     await query.answer()
@@ -275,7 +239,7 @@ async def del_hw_list(update, context):
         return
     lines = ["Выберите ДЗ для удаления:\n"]
     for idx, (db_id, task, due_date, photo_id, caption, _) in enumerate(tasks, start=1):
-        marker = "   " if photo_id else ""
+        marker = "📎 " if photo_id else ""
         body = caption if caption else task
         due_str = f" ({due_date})" if due_date else ""
         lines.append(f"{idx}️⃣ {marker}{body}{due_str}")
@@ -304,7 +268,6 @@ async def del_hw_confirm(update, context):
     await _show_hw_view_message(context.bot, update.effective_chat.id, update.effective_user.id)
 
 
-# === РАССЫЛКА ===
 async def broadcast_hw_to_subscribers(update, context):
     query = update.callback_query
     await query.answer()
@@ -332,7 +295,7 @@ async def broadcast_hw_to_subscribers(update, context):
     await _show_hw_view_message(context.bot, update.effective_chat.id, update.effective_user.id)
 
 
-# === ОСТАЛЬНОЕ БЕЗ ИЗМЕНЕНИЙ (ann, admins, extra, settings, schedule) ===
+# === ОСТАЛЬНОЕ (ann, admins, extra, settings, schedule) ===
 async def ann_menu(update, context):
     query = update.callback_query
     await query.answer()
@@ -710,7 +673,7 @@ async def users_paginated(update, context):
         banned = await asyncio.to_thread(db.get_all_banned_users)
         rows = [(b[0], b[1], b[2], b[3]) for b in banned]
         await query.edit_message_text(
-            f"   Забаненные (стр. {page + 1}):",
+            f"🚫 Забаненные (стр. {page + 1}):",
             reply_markup=kb.banned_paginated_kb(rows, page=page)
         )
     else:
@@ -735,7 +698,7 @@ async def user_action_menu(update, context):
     is_admin_user = await asyncio.to_thread(db.is_admin, target_id)
     name = _pick_display_name(target)
     text = (
-        f"{'  ' if is_admin_user else '👤'} <b>{name}</b>\n"
+        f"{'👑' if is_admin_user else '👤'} <b>{name}</b>\n"
         f"Telegram: @{target[1] or '—'}\n"
         f"ID: {target_id}\n"
         f"Админ: {'✅' if is_admin_user else '❌'}\n"
@@ -933,7 +896,7 @@ async def extra_view(update, context):
     items = await asyncio.to_thread(db.get_active_extra_classes)
     if not items:
         await query.edit_message_text("📭 Нет.", reply_markup=kb.back_button("a_extra_menu"))
- return
+        return
     lines = ["Активные:\n"]
     for idx, (item_id, subject, description, photo_id, created_at) in enumerate(items, start=1):
         date_part = created_at.split(" ")[0] if created_at else ""
@@ -1305,7 +1268,7 @@ async def sched_delete_pair(update, context):
     pairs = await asyncio.to_thread(db.get_base_schedule, week_type, int(day_idx))
     lines = [f"{week_type}, {WEEKDAYS_RU[int(day_idx)]}:\n"]
     for num, info in sorted(pairs.items()):
- lines.append(f"{num}. {info['subject']} ({info['teacher']}) — {info['room']}")
+        lines.append(f"{num}. {info['subject']} ({info['teacher']}) — {info['room']}")
     await query.edit_message_text("\n".join(lines) or "Пар пока нет.",
                                   reply_markup=kb.pair_choice_kb(pairs, week_type, int(day_idx)))
 
