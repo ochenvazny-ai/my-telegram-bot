@@ -4,6 +4,7 @@ import os
 import asyncio
 import logging
 from datetime import datetime, timedelta
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     ContextTypes, ConversationHandler, MessageHandler, CallbackQueryHandler, filters,
 )
@@ -73,9 +74,265 @@ async def hw_menu(update, context):
     await query.answer()
     if not await _require_admin(update):
         return
-    await query.edit_message_text("📚 Домашнее задание:", reply_markup=kb.hw_menu_kb())
+    # Новое поведение: сразу показываем список ДЗ + кнопки под ним
+    await _show_hw_view(update, context)
 
 
+async def _show_hw_view(update, context):
+    """Показывает список ДЗ с кнопками под ним (для админа)."""
+    query = update.callback_query
+    tasks = await asyncio.to_thread(db.get_all_tasks_db)
+    if not tasks:
+        text = "   ДЗ пока нет."
+    else:
+        lines = ["📚 Список ДЗ:\n"]
+        for idx, (db_id, task, due_date, photo_id, caption, _) in enumerate(tasks, start=1):
+            marker = "   " if photo_id else ""
+            body = caption if caption else task
+            due_str = f" — до {due_date}" if due_date else ""
+            lines.append(f"{idx}️⃣ {marker}{body}{due_str}")
+        text = "\n".join(lines)
+    await query.edit_message_text(text, reply_markup=kb.hw_admin_view_kb(has_tasks=bool(tasks)))
+
+
+async def _show_hw_view_message(context, chat_id, admin_user_id):
+    """То же самое, но отправляет новое сообщение (для возврата из диалогов)."""
+    tasks = await asyncio.to_thread(db.get_all_tasks_db)
+    if not tasks:
+        text = "📭 ДЗ пока нет."
+    else:
+        lines = ["📚 Список ДЗ:\n"]
+        for idx, (db_id, task, due_date, photo_id, caption, _) in enumerate(tasks, start=1):
+            marker = "   " if photo_id else ""
+            body = caption if caption else task
+            due_str = f" — до {due_date}" if due_date else ""
+            lines.append(f"{idx}️⃣ {marker}{body}{due_str}")
+        text = "\n".join(lines)
+    await context.bot.send_message(
+        chat_id=chat_id, text=text,
+        reply_markup=kb.hw_admin_view_kb(has_tasks=bool(tasks))
+    )
+
+
+async def hw_view_back(update, context):
+    """Возврат к списку ДЗ из любого места."""
+    query = update.callback_query
+    await query.answer()
+    if not await _require_admin(update):
+        return
+    await _show_hw_view(update, context)
+
+
+async def hw_view_message(context, chat_id, admin_user_id):
+    """Вспомогательная — отправить список ДЗ."""
+    tasks = await asyncio.to_thread(db.get_all_tasks_db)
+    if not tasks:
+        text = "📭 ДЗ пока нет."
+    else:
+        lines = ["📚 Список ДЗ:\n"]
+        for idx, (db_id, task, due_date, photo_id, caption, _) in enumerate(tasks, start=1):
+            marker = "   " if photo_id else ""
+            body = caption if caption else task
+            due_str = f" — до {due_date}" if due_date else ""
+            lines.append(f"{idx}️⃣ {marker}{body}{due_str}")
+        text = "\n".join(lines)
+    await context.bot.send_message(
+        chat_id=chat_id, text=text,
+        reply_markup=kb.hw_admin_view_kb(has_tasks=bool(tasks))
+    )
+
+
+# === ДОБАВЛЕНИЕ ДЗ (текст + фото + подпись) ===
+async def add_hw_start(update, context):
+    query = update.callback_query
+    await query.answer()
+    if not await _require_admin(update):
+        return ConversationHandler.END
+    await query.edit_message_text(
+        "📝 Пришлите задание (текстом) или прикрепите фото.\n"
+        "Если фото — бот спросит подпись.",
+        reply_markup=kb.cancel_button(),
+    )
+    return HW_TEXT
+
+
+async def add_hw_text(update, context):
+    """Поймали либо текст, либо фото."""
+    # Если прислали фото
+    if update.message and update.message.photo:
+        photo_id = update.message.photo[-1].file_id
+        caption = (update.message.caption or "").strip()
+        context.user_data['hw_photo_id'] = photo_id
+        if caption:
+            # Подпись сразу — сохраняем как есть, спросим срок
+            context.user_data['hw_task'] = caption
+            context.user_data.pop('hw_photo_id', None)
+            context.user_data['hw_final_photo_id'] = photo_id
+            await update.message.reply_text(
+                f"📝 Подпись получена:\n{caption}\n\nВведите срок сдачи:",
+                reply_markup=kb.no_due_button(),
+            )
+            return HW_DUE
+        else:
+            # Нет подписи — спрашиваем
+            await update.message.reply_text(
+                "   Фото получено. Введите подпись (или «Без подписи»):",
+                reply_markup=kb.no_caption_button(),
+            )
+            return HW_TEXT # остаёмся в этом состоянии    # Если текст
+    text = update.message.text.strip()
+    if text and text != "-":
+        context.user_data['hw_task'] = text
+        context.user_data.pop('hw_final_photo_id', None)
+        await update.message.reply_text(
+            f"📝 Задание:\n{text}\n\nВведите срок сдачи:",
+            reply_markup=kb.no_due_button(),
+        )
+        return HW_DUE
+
+    await update.message.reply_text("⚠️ Не понимаю. Пришлите текст или фото.")
+    return HW_TEXT
+
+
+async def add_hw_no_caption(update, context):
+    """Поймали текст после вопроса про подпись к фото."""
+    text = update.message.text.strip()
+    if text.lower() in ("без подписи", "пропустить", "-"):
+        context.user_data['hw_task'] = ""
+        context.user_data['hw_final_photo_id'] = context.user_data.get('hw_photo_id')
+        context.user_data.pop('hw_photo_id', None)
+        await update.message.reply_text(
+            "📎 Фото без подписи.\n\nВведите срок сдачи:",
+            reply_markup=kb.no_due_button(),
+        )
+        return HW_DUE
+    # Иначе это подпись
+    context.user_data['hw_task'] = text
+    context.user_data['hw_final_photo_id'] = context.user_data.get('hw_photo_id')
+    context.user_data.pop('hw_photo_id', None)
+    await update.message.reply_text(
+        f"📝 Подпись:\n{text}\n\nВведите срок сдачи:",
+        reply_markup=kb.no_due_button(),
+    )
+    return HW_DUE
+
+
+async def add_hw_due(update, context):
+    """Поймали срок (текст)."""
+    text = update.message.text.strip()
+    due_date = None if text in ("-", "Без срока", "без срока", "0") else text
+
+    task = context.user_data.get('hw_task', '')
+    photo_id = context.user_data.get('hw_final_photo_id')
+
+    new_id = await asyncio.to_thread(
+        db.add_task_db, task, due_date, photo_id, task if photo_id else None
+    )
+    if new_id:
+        await update.message.reply_text("✅ Добавлено.")
+    else:
+        await update.message.reply_text("❌ Ошибка.")
+    context.user_data.clear()
+    await _show_hw_view_message(update.message.get_bot(), update.effective_chat.id, update.effective_user.id)
+    return ConversationHandler.END
+
+
+async def add_hw_no_due(update, context):
+    """Нажата кнопка «Без срока»."""
+    query = update.callback_query
+    await query.answer()
+    task = context.user_data.get('hw_task', '')
+    photo_id = context.user_data.get('hw_final_photo_id')
+
+    new_id = await asyncio.to_thread(
+        db.add_task_db, task, None, photo_id, task if photo_id else None
+    )
+    if new_id:
+        try:
+            await query.edit_message_text("✅ Добавлено (без срока).")
+        except Exception:
+            pass
+    else:
+        try:
+            await query.edit_message_text("❌ Ошибка.")
+        except Exception:
+            pass
+    context.user_data.clear()
+    # Отправить список ДЗ
+    await _show_hw_view_message(context.bot, update.effective_chat.id, update.effective_user.id)
+    return ConversationHandler.END
+
+
+# === УДАЛЕНИЕ ДЗ ===
+async def del_hw_list(update, context):
+    query = update.callback_query
+    await query.answer()
+    if not await _require_admin(update):
+        return
+    tasks = await asyncio.to_thread(db.get_all_tasks_db)
+    if not tasks:
+        await query.edit_message_text("📭 Нет ДЗ.", reply_markup=kb.back_button("a_hw_view"))
+        return
+    lines = ["Выберите ДЗ для удаления:\n"]
+    for idx, (db_id, task, due_date, photo_id, caption, _) in enumerate(tasks, start=1):
+        marker = "   " if photo_id else ""
+        body = caption if caption else task
+        due_str = f" ({due_date})" if due_date else ""
+        lines.append(f"{idx}️⃣ {marker}{body}{due_str}")
+    await query.edit_message_text("\n".join(lines), reply_markup=kb.delete_hw_kb(tasks))
+
+
+async def del_hw_pick(update, context):
+    query = update.callback_query
+    await query.answer()
+    if not await _require_admin(update):
+        return
+    task_id = int(query.data.split("_")[1])
+    context.user_data['pending_hw_id'] = task_id
+    await query.edit_message_text("⚠️ Точно удалить?", reply_markup=kb.confirm_kb("delhw", task_id))
+
+
+async def del_hw_confirm(update, context):
+    query = update.callback_query
+    await query.answer()
+    if not await _require_admin(update):
+        return
+    task_id = context.user_data.pop('pending_hw_id', None)
+    if task_id is not None:
+        await asyncio.to_thread(db.delete_task_db, task_id)
+    await query.edit_message_text("🗑 Удалено.")
+    await _show_hw_view_message(context.bot, update.effective_chat.id, update.effective_user.id)
+
+
+# === РАССЫЛКА ===
+async def broadcast_hw_to_subscribers(update, context):
+    query = update.callback_query
+    await query.answer()
+    if not await _require_admin(update):
+        return
+    tasks = await asyncio.to_thread(db.get_all_tasks_db)
+    if not tasks:
+        await query.answer("Нет ДЗ для рассылки.", show_alert=True)
+        return
+    user_ids = await asyncio.to_thread(db.get_user_ids_with_notify, "homework")
+    if not user_ids:
+        await query.answer("Нет подписанных.", show_alert=True)
+        return
+    await query.edit_message_text("⏳ Рассылаю...")
+    sent = 0
+    failed = 0
+    for uid in user_ids:
+        try:
+            await context.bot.send_message(chat_id=uid, text="📚 ДЗ обновлено! Посмотрите список.")
+            sent += 1
+        except Exception:
+            failed += 1
+        await asyncio.sleep(0.05)
+    await query.message.reply_text(f"✅ Разослано {sent}. ❌ Не доставлено {failed}.")
+    await _show_hw_view_message(context.bot, update.effective_chat.id, update.effective_user.id)
+
+
+# === ОСТАЛЬНОЕ БЕЗ ИЗМЕНЕНИЙ (ann, admins, extra, settings, schedule) ===
 async def ann_menu(update, context):
     query = update.callback_query
     await query.answer()
@@ -127,105 +384,6 @@ async def shift_set(update, context):
     shift = query.data.split("_")[1]
     await asyncio.to_thread(db.set_current_shift, shift)
     await query.edit_message_text(f"✅ Смена изменена на {shift} смену.", reply_markup=kb.admin_panel_kb())
-
-
-async def add_hw_start(update, context):
-    query = update.callback_query
-    await query.answer()
-    if not await _require_admin(update):
-        return ConversationHandler.END
-    await query.edit_message_text("📝 Введите текст задания:", reply_markup=kb.cancel_button())
-    return HW_TEXT
-
-
-async def add_hw_text(update, context):
-    context.user_data['task_text'] = update.message.text.strip()
-    await update.message.reply_text(
-        "   Введите срок сдачи или '-' без срока:", reply_markup=kb.cancel_button()
-    )
-    return HW_DUE
-
-
-async def add_hw_due(update, context):
-    text = update.message.text.strip()
-    due_date = None if text == "-" else text
-    task_text = context.user_data.get('task_text')
-    new_id = await asyncio.to_thread(db.add_task_db, task_text, due_date)
-    if new_id:
-        await update.message.reply_text(f"✅ Добавлено.")
-    else:
-        await update.message.reply_text("❌ Ошибка.")
-    context.user_data.clear()
-    await update.message.reply_text("👑 Админ-панель", reply_markup=kb.admin_panel_kb())
-    return ConversationHandler.END
-
-
-async def broadcast_hw_to_subscribers(update, context):
-    query = update.callback_query
-    await query.answer()
-    if not await _require_admin(update):
-        return
-    user_ids = await asyncio.to_thread(db.get_user_ids_with_notify, "homework")
-    if not user_ids:
-        await query.answer("Нет подписанных.", show_alert=True)
-        return
-    tasks = await asyncio.to_thread(db.get_all_tasks_db)
-    if not tasks:
-        await query.answer("Нет ДЗ.", show_alert=True)
-        return
-    last_task = tasks[-1]
-    _, task_text, due_date, _ = last_task
-    due_str = f"\n(срок: {due_date})" if due_date else ""
-    msg = f"📚<b>Обновлено ДЗ</b>\n\n{task_text}{due_str}"
-    await query.edit_message_text("⏳ Рассылаю...")
-    sent = 0
-    failed = 0
-    for uid in user_ids:
-        try:
-            await context.bot.send_message(chat_id=uid, text=msg, parse_mode='HTML')
-            sent += 1
-        except Exception:
-            failed += 1
-        await asyncio.sleep(0.05)
-    await query.message.reply_text(f"✅ Разослано {sent}. ❌ Не доставлено {failed}.")
-    await context.bot.send_message(chat_id=update.effective_chat.id, text="👑 Админ-панель", reply_markup=kb.admin_panel_kb())
-
-
-async def del_hw_list(update, context):
-    query = update.callback_query
-    await query.answer()
-    if not await _require_admin(update):
-        return
-    tasks = await asyncio.to_thread(db.get_all_tasks_db)
-    if not tasks:
-        await query.edit_message_text("📭 Нет ДЗ.", reply_markup=kb.admin_panel_kb())
-        return
-    lines = ["Удалить ДЗ:\n"]
-    for idx, (_, task, due_date, _) in enumerate(tasks, start=1):
-        due_str = f" ({due_date})" if due_date else ""
-        lines.append(f"{idx}️⃣ {task}{due_str}")
-    await query.edit_message_text("\n".join(lines), reply_markup=kb.delete_hw_kb(tasks))
-
-
-async def del_hw_pick(update, context):
-    query = update.callback_query
-    await query.answer()
-    if not await _require_admin(update):
-        return
-    task_id = int(query.data.split("_")[1])
-    context.user_data['pending_hw_id'] = task_id
-    await query.edit_message_text("⚠️ Точно удалить?", reply_markup=kb.confirm_kb("delhw", task_id))
-
-
-async def del_hw_confirm(update, context):
-    query = update.callback_query
-    await query.answer()
-    if not await _require_admin(update):
-        return
-    task_id = context.user_data.pop('pending_hw_id', None)
-    if task_id is not None:
-        await asyncio.to_thread(db.delete_task_db, task_id)
-    await query.edit_message_text("🗑 Удалено.", reply_markup=kb.admin_panel_kb())
 
 
 async def add_ann_start(update, context):
@@ -479,14 +637,12 @@ async def view_admins(update, context):
     await query.edit_message_text("\n".join(lines), reply_markup=kb.back_button("users_menu"))
 
 
-# === ПОЛЬЗОВАТЕЛИ / АДМИНЫ / ЗАБАНЕННЫЕ ===
 async def users_menu(update, context):
     query = update.callback_query
     await query.answer()
     if not await _require_admin(update):
         return
     context.user_data['viewing_banned'] = False
-    # Проверяем есть ли забаненные — если да, показываем кнопку
     banned_count = len(await asyncio.to_thread(db.get_all_banned_users))
     await query.edit_message_text(
         "👥 Пользователи:",
@@ -554,7 +710,7 @@ async def users_paginated(update, context):
         banned = await asyncio.to_thread(db.get_all_banned_users)
         rows = [(b[0], b[1], b[2], b[3]) for b in banned]
         await query.edit_message_text(
-            f"🚫 Забаненные (стр. {page + 1}):",
+            f"   Забаненные (стр. {page + 1}):",
             reply_markup=kb.banned_paginated_kb(rows, page=page)
         )
     else:
@@ -579,7 +735,7 @@ async def user_action_menu(update, context):
     is_admin_user = await asyncio.to_thread(db.is_admin, target_id)
     name = _pick_display_name(target)
     text = (
-        f"{'👑' if is_admin_user else '👤'} <b>{name}</b>\n"
+        f"{'  ' if is_admin_user else '👤'} <b>{name}</b>\n"
         f"Telegram: @{target[1] or '—'}\n"
         f"ID: {target_id}\n"
         f"Админ: {'✅' if is_admin_user else '❌'}\n"
@@ -617,7 +773,7 @@ async def user_toggle_admin(update, context):
     is_admin_user = await asyncio.to_thread(db.is_admin, target_id)
     name = _pick_display_name(target)
     text = (
-        f"{'  ' if is_admin_user else '👤'} <b>{name}</b>\n"
+        f"{'👑' if is_admin_user else '👤'} <b>{name}</b>\n"
         f"Telegram: @{target[1] or '—'}\n"
         f"ID: {target_id}\n"
         f"Админ: {'✅' if is_admin_user else '❌'}\n"
@@ -627,7 +783,6 @@ async def user_toggle_admin(update, context):
 
 
 async def user_ban(update, context):
-    """Бан пользователя вместо удаления."""
     query = update.callback_query
     await query.answer()
     if not await _require_admin(update):
@@ -649,7 +804,6 @@ async def user_ban(update, context):
 
 
 async def user_unban(update, context):
-    """Подготовка к разбану — показывает подтверждение."""
     query = update.callback_query
     await query.answer()
     if not await _require_admin(update):
@@ -779,7 +933,7 @@ async def extra_view(update, context):
     items = await asyncio.to_thread(db.get_active_extra_classes)
     if not items:
         await query.edit_message_text("📭 Нет.", reply_markup=kb.back_button("a_extra_menu"))
-        return
+ return
     lines = ["Активные:\n"]
     for idx, (item_id, subject, description, photo_id, created_at) in enumerate(items, start=1):
         date_part = created_at.split(" ")[0] if created_at else ""
@@ -811,7 +965,7 @@ async def broadcast_extra_class(update, context):
             if photo_id:
                 await context.bot.send_photo(chat_id=uid, photo=photo_id, caption=f"📚 Новое: <b>{subject}</b>", parse_mode='HTML')
             else:
-                body = f"   Новое: <b>{subject}</b>"
+                body = f"📚 Новое: <b>{subject}</b>"
                 if description:
                     body += f"\n\n{description}"
                 await context.bot.send_message(chat_id=uid, text=body, parse_mode='HTML')
@@ -1151,7 +1305,7 @@ async def sched_delete_pair(update, context):
     pairs = await asyncio.to_thread(db.get_base_schedule, week_type, int(day_idx))
     lines = [f"{week_type}, {WEEKDAYS_RU[int(day_idx)]}:\n"]
     for num, info in sorted(pairs.items()):
-        lines.append(f"{num}. {info['subject']} ({info['teacher']}) — {info['room']}")
+ lines.append(f"{num}. {info['subject']} ({info['teacher']}) — {info['room']}")
     await query.edit_message_text("\n".join(lines) or "Пар пока нет.",
                                   reply_markup=kb.pair_choice_kb(pairs, week_type, int(day_idx)))
 

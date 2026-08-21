@@ -51,7 +51,6 @@ async def _send_main_menu(context, chat_id, user_id):
 
 
 async def _check_banned_message(update, context):
-    """Если юзер забанен — отвечает бан-сообщением, возвращает True."""
     user_id = update.effective_user.id
     is_banned = await asyncio.to_thread(db.is_user_banned, user_id)
     if is_banned:
@@ -64,7 +63,6 @@ async def _check_banned_message(update, context):
 
 
 async def _check_banned_callback(update, context):
-    """Если юзер забанен — показывает алерт, возвращает True."""
     user_id = update.effective_user.id
     is_banned = await asyncio.to_thread(db.is_user_banned, user_id)
     if is_banned:
@@ -86,7 +84,7 @@ async def start(update, context):
         await update.message.reply_text(WELCOME_TEXT, reply_markup=kb.reply_menu_button())
     except Exception:
         pass
-    return 0  # WELCOME_NAME
+    return 0
 
 
 async def welcome_finish(update, context):
@@ -98,7 +96,6 @@ async def welcome_finish(update, context):
         await update.message.reply_text("Имя не может быть пустым. Введи, пожалуйста, своё имя:")
         return 0
     await asyncio.to_thread(db.set_user_display_name, user.id, name)
-    # ВСЕГДА «Я тебя узнал» — даже если имя уже было
     await update.message.reply_text(f"✅ Отлично, я тебя узнал!\n\nУспехов в учёбе, {name}! 📚")
     await _send_main_menu(context, update.effective_chat.id, user.id)
     return ConversationHandler.END
@@ -180,22 +177,49 @@ async def show_schedule(update, context):
     await _send_main_menu(context, update.effective_chat.id, user_id)
 
 
+# === НОВОЕ: ДЗ с фото ===
 async def show_hw(update, context):
+    """Показывает ДЗ: текстом + фото если есть."""
     if await _check_banned_callback(update, context):
         return
     query = update.callback_query
     await query.answer()
-    await query.edit_message_text("Загружаю список...")
     tasks = await asyncio.to_thread(db.get_all_tasks_db)
     if not tasks:
-        text = "📭 Нет текущих домашних заданий."
-    else:
-        lines = ["📚 Текущие домашние задания:\n"]
-        for idx, (_, task, due_date, _) in enumerate(tasks, start=1):
-            due_str = f" (срок: {due_date})" if due_date else ""
-            lines.append(f"{idx}️⃣ {task}{due_str}")
-        text = "\n".join(lines)
-    await query.edit_message_text(text, reply_markup=kb.back_button())
+        await query.edit_message_text("📭 Нет домашних заданий.", reply_markup=kb.back_button())
+        return
+    try:
+        await query.delete_message()
+    except Exception:
+        pass
+    # Шлём сводный текст
+    lines = ["📚 Текущие домашние задания:\n"]
+    for idx, (_, task, due_date, photo_id, caption, _) in enumerate(tasks, start=1):
+        body = caption if caption else task
+        due_str = f" (срок: {due_date})" if due_date else ""
+        marker = "   " if photo_id else ""
+        lines.append(f"{idx}️⃣ {marker}{body}{due_str}")
+    text = "\n".join(lines)
+    await context.bot.send_message(chat_id=update.effective_chat.id, text=text)
+    # Шлём каждое фото отдельным сообщением
+    for idx, (_, task, due_date, photo_id, caption, _) in enumerate(tasks, start=1):
+        if photo_id:
+            cap = caption if caption else task
+            due_str = f"\n\n(срок: {due_date})" if due_date else ""
+            try:
+                await context.bot.send_photo(
+                    chat_id=update.effective_chat.id,
+                    photo=photo_id,
+                    caption=f"{idx}️⃣ {cap}{due_str}",
+                )
+            except Exception:
+                logger.exception("send hw photo failed")
+    # В конце — кнопка назад в главное меню
+    user_id = update.effective_user.id
+    await context.bot.send_message(
+        chat_id=update.effective_chat.id, text="Главное меню:",
+        reply_markup=kb.main_menu_kb(await asyncio.to_thread(db.is_admin, user_id))
+    )
 
 
 async def show_announcements(update, context):
@@ -205,15 +229,14 @@ async def show_announcements(update, context):
     await query.answer()
     anns = await asyncio.to_thread(db.get_active_announcements)
     if not anns:
-        text = "📭 Активных объявлений нет."
-    else:
-        lines = ["   Активные объявления:\n"]
-        for idx, (_, ann_text, created_at, is_note, photo_id) in enumerate(anns, start=1):
-            date_part = created_at.split(" ")[0] if created_at else ""
-            prefix = "📝 " if is_note else ("📎 " if photo_id else "")
-            body = ann_text if ann_text else "(без текста — только вложение)"
-            lines.append(f"{idx}️⃣ {prefix}{date_part}: {body}")
-        text = "\n".join(lines)
+        await query.edit_message_text("📭 Активных объявлений нет.", reply_markup=kb.back_button())
+        return
+    lines = ["   Активные объявления:\n"]
+    for idx, (_, ann_text, created_at, is_note, photo_id) in enumerate(anns, start=1):
+        date_part = created_at.split(" ")[0] if created_at else ""
+        prefix = "📝 " if is_note else ("📎 " if photo_id else "")
+        body = ann_text if ann_text else "(без текста — только вложение)"
+        lines.append(f"{idx}️⃣ {prefix}{date_part}: {body}")
     await query.edit_message_text(text, reply_markup=kb.back_button())
 
 
@@ -233,11 +256,11 @@ async def show_extra_classes(update, context):
                 chat_id=update.effective_chat.id,
                 text="📭 Нет активных дополнительных занятий.",
                 reply_markup=kb.back_button(),
-            )
+ )
             return
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
-            text="   Дополнительные занятия. Выберите:",
+            text="📚 Дополнительные занятия. Выберите:",
             reply_markup=kb.extra_classes_list_kb(items),
         )
         return
@@ -321,7 +344,7 @@ async def show_bells_menu(update, context):
             reply_markup=kb.bells_choice_kb(),
         )
         return
-    await query.edit_message_text("📞 Расписание звонков. Выберите тип дня:", reply_markup=kb.bells_choice_kb())
+    await query.edit_message_text("   Расписание звонков. Выберите тип дня:", reply_markup=kb.bells_choice_kb())
 
 
 async def show_bells_regular(update, context):

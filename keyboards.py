@@ -25,7 +25,28 @@ def back_button(callback_data="main_menu"):
 
 
 def cancel_button(callback_data="cancel_action"):
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("🚫 Без срока", callback_data="a_hw_no_due")],
+        [InlineKeyboardButton("❌ Отмена", callback_data=callback_data)],
+    ])
+
+
+def cancel_button_simple(callback_data="cancel_action"):
     return InlineKeyboardMarkup([[InlineKeyboardButton("❌ Отмена", callback_data=callback_data)]])
+
+
+def no_due_button():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("🚫 Без срока", callback_data="a_hw_no_due")],
+        [InlineKeyboardButton("❌ Отмена", callback_data="cancel_action")],
+    ])
+
+
+def no_caption_button():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("Без подписи", callback_data="a_hw_no_caption")],
+        [InlineKeyboardButton("❌ Отмена", callback_data="cancel_action")],
+    ])
 
 
 def confirm_kb(action, item_id):
@@ -97,7 +118,7 @@ def ann_skip_photo_kb():
 
 def admin_panel_kb():
     kb = [
-        [InlineKeyboardButton("📚 Домашнее задание", callback_data="a_hw_menu")],
+        [InlineKeyboardButton("📚 Домашнее задание", callback_data="a_hw_view")],
         [InlineKeyboardButton("📢 Объявления", callback_data="a_ann_menu")],
         [InlineKeyboardButton("📚 Доп. занятия", callback_data="a_extra_menu")],
         [InlineKeyboardButton("👥 Пользователи", callback_data="users_menu")],
@@ -108,7 +129,6 @@ def admin_panel_kb():
 
 
 def users_menu_kb(show_banned=False):
-    """Если есть забаненные — показываем третий пункт."""
     buttons = [
         [InlineKeyboardButton("👤 Пользователи", callback_data="users_view")],
         [InlineKeyboardButton("👑 Админы", callback_data="admins_view")],
@@ -125,7 +145,7 @@ def admins_only_paginated_kb(admins, page):
         user_id, _username, _first_name, display_name, _created = u
         name = display_name or _first_name or _username or "Без имени"
         short = name[:25] + "..." if len(name) > 25 else name
-        buttons.append([InlineKeyboardButton(f"👑 {short} (ID:{user_id})", callback_data=f"useraction_{user_id}")])
+        buttons.append([InlineKeyboardButton(f"   {short} (ID:{user_id})", callback_data=f"useraction_{user_id}")])
     nav = []
     if page > 0:
         nav.append(InlineKeyboardButton("◀️", callback_data=f"userspage_{page - 1}"))
@@ -156,13 +176,12 @@ def users_paginated_kb(users, page):
 
 
 def banned_paginated_kb(rows, page):
-    """Список забаненных. rows: (id, username, first_name, display_name)."""
     buttons = []
     for r in rows[page*30:(page+1)*30]:
         user_id, _u, _f, display_name = r
         name = display_name or _u or _f or "Без имени"
         short = name[:25] + "..." if len(name) > 25 else name
-        buttons.append([InlineKeyboardButton(f"   {short} (ID:{user_id})", callback_data=f"unbanuser_{user_id}")])
+        buttons.append([InlineKeyboardButton(f"🚫 {short} (ID:{user_id})", callback_data=f"unbanuser_{user_id}")])
     nav = []
     if page > 0:
         nav.append(InlineKeyboardButton("◀️", callback_data=f"userspage_{page - 1}"))
@@ -191,13 +210,15 @@ def shift_choice_kb():
     ])
 
 
-def hw_menu_kb():
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("➕ Добавить ДЗ", callback_data="a_add_hw")],
-        [InlineKeyboardButton("❌ Удалить ДЗ", callback_data="a_del_hw")],
-        [InlineKeyboardButton("📣 Разослать подписанным", callback_data="broadcast_hw")],
-        [InlineKeyboardButton("🔙 Назад", callback_data="admin_panel")],
-    ])
+def hw_admin_view_kb(has_tasks=False):
+    """Список ДЗ для админа + кнопки под ним."""
+    buttons = []
+    buttons.append([InlineKeyboardButton("➕ Добавить ДЗ", callback_data="a_add_hw")])
+    if has_tasks:
+        buttons.append([InlineKeyboardButton("🗑 Удалить ДЗ", callback_data="a_del_hw")])
+    buttons.append([InlineKeyboardButton("📣 Разослать всем", callback_data="broadcast_hw")])
+    buttons.append([InlineKeyboardButton("🔙 Админ-панель", callback_data="admin_panel")])
+    return InlineKeyboardMarkup(buttons)
 
 
 def ann_menu_kb():
@@ -265,10 +286,17 @@ def bot_settings_kb():
 
 def delete_hw_kb(tasks):
     buttons = []
-    for idx, (db_id, task, due_date, _) in enumerate(tasks, start=1):
-        short = task[:30] + "..." if len(task) > 30 else task
-        buttons.append([InlineKeyboardButton(f"{idx}. {short}", callback_data=f"delhw_{db_id}")])
-    buttons.append([InlineKeyboardButton("🔙 Назад", callback_data="a_hw_menu")])
+    for idx, item in enumerate(tasks, start=1):
+        db_id = item[0]
+        task = item[1]
+        photo_id = item[3] if len(item) > 3 else None
+        caption = item[4] if len(item) > 4 else None
+        marker = "   " if photo_id else ""
+        body = caption if caption else task
+        short = body[:30] + "..." if len(body) > 30 else body
+        buttons.append([InlineKeyboardButton(f"{idx}. {marker}{short}", callback_data=f"delhw_{db_id}")])
+    buttons.append([InlineKeyboardButton("🔙 К списку ДЗ", callback_data="a_hw_view")])
+    buttons.append([InlineKeyboardButton("🔙 Админ-панель", callback_data="admin_panel")])
     return InlineKeyboardMarkup(buttons)
 
 
@@ -302,7 +330,7 @@ def schedule_edit_menu_kb():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("📤 Загрузить из Excel", callback_data="sched_upload")],
         [InlineKeyboardButton("📝 Редактировать по дням", callback_data="sched_by_day")],
-        [InlineKeyboardButton("🗑 Удалить пары на день", callback_data="a_del_all_day")],
+        [InlineKeyboardButton("   Удалить пары на день", callback_data="a_del_all_day")],
         [InlineKeyboardButton("📣 Разослать замены", callback_data="force_repl_broadcast")],
         [InlineKeyboardButton("🔙 Назад", callback_data="a_bot_settings")],
     ])

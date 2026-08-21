@@ -72,8 +72,15 @@ def build_conversations():
     conv_add_hw = ConversationHandler(
         entry_points=[CallbackQueryHandler(ha.add_hw_start, pattern="^a_add_hw$")],
         states={
-            HW_TEXT: [MessageHandler(filters.TEXT & ~filters.COMMAND, ha.add_hw_text)],
-            HW_DUE: [MessageHandler(filters.TEXT & ~filters.COMMAND, ha.add_hw_due)],
+            HW_TEXT: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, ha.add_hw_text),
+                MessageHandler(filters.PHOTO, ha.add_hw_text),
+                CallbackQueryHandler(ha.add_hw_no_caption, pattern="^a_hw_no_caption$"),
+            ],
+            HW_DUE: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, ha.add_hw_due),
+                CallbackQueryHandler(ha.add_hw_no_due, pattern="^a_hw_no_due$"),
+            ],
         },
         fallbacks=fallback,
         per_message=False,
@@ -136,8 +143,8 @@ def build_conversations():
         states={
             EXTRA_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, ha.extra_add_name)],
             EXTRA_CONTENT: [
-                MessageHandler(filters.PHOTO, ha.extra_add_content_photo),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, ha.extra_add_content_text),
+                MessageHandler(filters.PHOTO, ha.extra_add_content),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, ha.extra_add_content),
                 CallbackQueryHandler(ha.extra_add_skip_photo, pattern="^extra_skip_photo$"),
             ],
         },
@@ -212,7 +219,8 @@ def main():
     application.add_handler(CallbackQueryHandler(ha.admin_panel_entry, pattern="^admin_panel$"))
     application.add_handler(CallbackQueryHandler(ha.shift_menu, pattern="^a_shift$"))
     application.add_handler(CallbackQueryHandler(ha.shift_set, pattern="^shiftset_(1|2)$"))
-    application.add_handler(CallbackQueryHandler(ha.hw_menu, pattern="^a_hw_menu$"))
+    application.add_handler(CallbackQueryHandler(ha.hw_menu, pattern="^a_hw_view$"))
+    application.add_handler(CallbackQueryHandler(ha.hw_view_back, pattern="^a_hw_view_back$"))
     application.add_handler(CallbackQueryHandler(ha.broadcast_hw_to_subscribers, pattern="^broadcast_hw$"))
     application.add_handler(CallbackQueryHandler(ha.ann_menu, pattern="^a_ann_menu$"))
     application.add_handler(CallbackQueryHandler(ha.extra_menu, pattern="^a_extra_menu$"))
@@ -237,7 +245,6 @@ def main():
     application.add_handler(CallbackQueryHandler(ha.extra_del_confirm, pattern="^confirm_delextra_\\d+$"))
     application.add_handler(CallbackQueryHandler(ha.extra_view, pattern="^a_view_extra$"))
 
-    # Пользователи / Админы / Забаненные
     application.add_handler(CallbackQueryHandler(ha.users_menu, pattern="^users_menu$"))
     application.add_handler(CallbackQueryHandler(ha.view_users_list, pattern="^users_view$"))
     application.add_handler(CallbackQueryHandler(ha.view_admins_list, pattern="^admins_view$"))

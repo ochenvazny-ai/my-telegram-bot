@@ -98,7 +98,6 @@ def unban_user(user_id):
 
 
 def delete_user_by_id(user_id):
-    """Алиас — теперь банит."""
     return ban_user(user_id)
 
 
@@ -158,12 +157,14 @@ def remove_admin_by_user_id(user_id):
         return False
 
 
-def add_task_db(task_text, due_date_str):
+def add_task_db(task_text, due_date_str, photo_id=None, caption=None):
+    """Добавляет ДЗ. Поддерживает фото."""
     try:
         with get_cursor(commit=True) as cur:
             cur.execute(
-                "INSERT INTO homework (task, due_date, created_at) VALUES (%s, %s, NOW()) RETURNING id;",
-                (task_text, due_date_str),
+                "INSERT INTO homework (task, due_date, photo_id, caption, created_at) "
+                "VALUES (%s, %s, %s, %s, NOW()) RETURNING id;",
+                (task_text, due_date_str, photo_id, caption),
             )
             return cur.fetchone()["id"]
     except Exception:
@@ -172,10 +173,18 @@ def add_task_db(task_text, due_date_str):
 
 
 def get_all_tasks_db():
+    """Возвращает список ДЗ. Каждый элемент — кортеж:
+    (id, task, due_date, photo_id, caption)."""
     try:
         with get_cursor() as cur:
-            cur.execute("SELECT id, task, due_date, created_at FROM homework ORDER BY due_date, created_at;")
-            return [(r["id"], r["task"], r["due_date"], r["created_at"]) for r in cur.fetchall()]
+            cur.execute(
+                "SELECT id, task, due_date, photo_id, caption, created_at FROM homework "
+                "ORDER BY due_date, created_at;"
+            )
+            return [
+                (r["id"], r["task"], r["due_date"], r["photo_id"], r["caption"], r["created_at"])
+                for r in cur.fetchall()
+            ]
     except Exception:
         logger.exception("get_all_tasks_db failed")
         return []
@@ -544,7 +553,6 @@ def set_user_notify(user_id, kind, enabled):
 
 
 def get_all_active_users():
-    """Не забаненные пользователи."""
     try:
         with get_cursor() as cur:
             cur.execute(
@@ -559,7 +567,6 @@ def get_all_active_users():
 
 
 def get_all_banned_users():
-    """Забаненные пользователи."""
     try:
         with get_cursor() as cur:
             cur.execute(
@@ -574,12 +581,10 @@ def get_all_banned_users():
 
 
 def get_all_users_with_username():
-    """Алиас — только активные."""
     return get_all_active_users()
 
 
 def get_user_ids_with_notify(kind):
-    """Только НЕ забаненные."""
     col_map = {
         "replacements": "notify_replacements",
         "announcements": "notify_announcements",
