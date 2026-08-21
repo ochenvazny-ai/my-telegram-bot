@@ -96,7 +96,7 @@ async def welcome_finish(update, context):
         await update.message.reply_text("Имя не может быть пустым. Введи, пожалуйста, своё имя:")
         return 0
     await asyncio.to_thread(db.set_user_display_name, user.id, name)
-    await update.message.reply_text(f"✅ Отлично, я тебя узнал!\n\nУспехов в учёбе, {name}! 📚")
+    await update.message.reply_text(f"✅ Отлично, я тебя узнал!\n\nУспехов в учёбе, {name}!   ")
     await _send_main_menu(context, update.effective_chat.id, user.id)
     return ConversationHandler.END
 
@@ -177,9 +177,49 @@ async def show_schedule(update, context):
     await _send_main_menu(context, update.effective_chat.id, user_id)
 
 
-# === НОВОЕ: ДЗ с фото ===
+def _render_hw_list_text(tasks):
+    """Текст списка ДЗ для пользователя с кнопками-вложениями."""
+    lines = ["📚 Текущие домашние задания:\n"]
+    for idx, item in enumerate(tasks, start=1):
+        db_id, subject, task, due_date_str, photos, _ = item
+        photos_count = len(photos or [])
+        marker = f" 📎×{photos_count}" if photos_count >0 else ""
+        due_text = ""
+        if due_date_str:
+            date_obj = db.parse_due_date(due_date_str)
+            due_text = f" — {db.format_due_date_for_display(date_obj)}" if date_obj else ""
+        subj_str = f"<b>{subject}</b>" if subject else ""
+        task_str = f"{task}" if task else ""
+        if subj_str and task_str:
+            body = f"{subj_str}: {task_str}"
+        elif subj_str:
+            body = subj_str
+        else:
+            body = task_str
+        lines.append(f"{idx}️⃣ {body}{due_text}{marker}")
+    return "\n".join(lines)
+
+
+def _hw_photos_buttons(tasks):
+    """Inline-кнопки под каждым ДЗ с фото: нажал → прислал фото."""
+    buttons = []
+    for idx, item in enumerate(tasks, start=1):
+        db_id, subject, task, due_date_str, photos, _ = item
+        if not photos:
+            continue
+        short = subject or task or "ДЗ"
+        short = short[:25] + "..." if len(short) > 25 else short
+        buttons.append([InlineKeyboardButton(
+            f"📎 {idx}. {short}", callback_data=f"hwphoto_{db_id}"
+        )])
+    buttons.append([InlineKeyboardButton("🔙 Назад в меню", callback_data="main_menu")])
+    return InlineKeyboardMarkup(buttons)
+
+
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+
+
 async def show_hw(update, context):
-    """Показывает ДЗ: текстом + фото если есть."""
     if await _check_banned_callback(update, context):
         return
     query = update.callback_query
@@ -188,37 +228,81 @@ async def show_hw(update, context):
     if not tasks:
         await query.edit_message_text("📭 Нет домашних заданий.", reply_markup=kb.back_button())
         return
+    text = _render_hw_list_text(tasks)
+    try:
+        await query.edit_message_text(text, parse_mode='HTML', reply_markup=_hw_photos_buttons(tasks))
+    except Exception:
+        try:
+            await query.delete_message()
+        except Exception:
+            pass
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id, text=text, parse_mode='HTML',
+            reply_markup=_hw_photos_buttons(tasks),
+        )
+
+
+async def show_hw_photos(update, context):
+    """Показывает фото ДЗ по кнопке."""
+    if await _check_banned_callback(update, context):
+        return
+    query = update.callback_query
+    await query.answer()
+    try:
+        task_id = int(query.data.split("_")[1])
+    except (ValueError, IndexError):
+        return
+    # Достаём нужное ДЗ
+    tasks = await asyncio.to_thread(db.get_all_tasks_db)
+    target = next((t for t in tasks if t[0] == task_id), None)
+    if not target:
+        await query.answer("❌ Не найдено.", show_alert=True)
+        return
+    db_id, subject, task_text, due_date_str, photos, _ = target
+    if not photos:
+        await query.answer("Нет вложений.", show_alert=True)
+        return
+    cap_lines = []
+    if subject:
+        cap_lines.append(f"📚<b>{subject}</b>")
+    if task_text:
+        cap_lines.append(task_text)
+    if due_date_str:
+        date_obj = db.parse_due_date(due_date_str)
+        if date_obj:
+            cap_lines.append(f"\n📅 {db.format_due_date_for_display(date_obj)}")
+    caption = "\n".join(cap_lines) or "Вложение к ДЗ"
     try:
         await query.delete_message()
     except Exception:
         pass
-    # Шлём сводный текст
-    lines = ["📚 Текущие домашние задания:\n"]
-    for idx, (_, task, due_date, photo_id, caption, _) in enumerate(tasks, start=1):
-        body = caption if caption else task
-        due_str = f" (срок: {due_date})" if due_date else ""
-        marker = "   " if photo_id else ""
-        lines.append(f"{idx}️⃣ {marker}{body}{due_str}")
-    text = "\n".join(lines)
-    await context.bot.send_message(chat_id=update.effective_chat.id, text=text)
-    # Шлём каждое фото отдельным сообщением
-    for idx, (_, task, due_date, photo_id, caption, _) in enumerate(tasks, start=1):
-        if photo_id:
-            cap = caption if caption else task
-            due_str = f"\n\n(срок: {due_date})" if due_date else ""
-            try:
-                await context.bot.send_photo(
-                    chat_id=update.effective_chat.id,
-                    photo=photo_id,
-                    caption=f"{idx}️⃣ {cap}{due_str}",
-                )
-            except Exception:
-                logger.exception("send hw photo failed")
-    # В конце — кнопка назад в главное меню
-    user_id = update.effective_user.id
+    chat_id = update.effective_chat.id
+    # Шлём медиа-группу если несколько фото
+    if len(photos) == 1:
+        try:
+            await context.bot.send_photo(chat_id=chat_id, photo=photos[0], caption=caption, parse_mode='HTML')
+        except Exception:
+            logger.exception("send hw photo failed")
+    else:
+        from telegram import InputMediaPhoto
+        media = []
+        for i, p in enumerate(photos[:10]):
+            cap = caption if i == 0 else ""
+            media.append(InputMediaPhoto(media=p, caption=cap, parse_mode='HTML'))
+        try:
+            await context.bot.send_media_group(chat_id=chat_id, media=media)
+        except Exception:
+            logger.exception("send hw media_group failed")
+            for p in photos:
+                try:
+                    await context.bot.send_photo(chat_id=chat_id, photo=p)
+                except Exception:
+                    pass
+    # Кнопка назад к списку ДЗ
     await context.bot.send_message(
-        chat_id=update.effective_chat.id, text="Главное меню:",
-        reply_markup=kb.main_menu_kb(await asyncio.to_thread(db.is_admin, user_id))
+        chat_id=chat_id,
+        text="🔼 Назад к списку ДЗ",
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Назад", callback_data="menu_hw")]]),
     )
 
 
@@ -231,13 +315,13 @@ async def show_announcements(update, context):
     if not anns:
         await query.edit_message_text("📭 Активных объявлений нет.", reply_markup=kb.back_button())
         return
-    lines = ["   Активные объявления:\n"]
+    lines = ["📢 Активные объявления:\n"]
     for idx, (_, ann_text, created_at, is_note, photo_id) in enumerate(anns, start=1):
         date_part = created_at.split(" ")[0] if created_at else ""
         prefix = "📝 " if is_note else ("📎 " if photo_id else "")
         body = ann_text if ann_text else "(без текста — только вложение)"
         lines.append(f"{idx}️⃣ {prefix}{date_part}: {body}")
-    await query.edit_message_text(text, reply_markup=kb.back_button())
+    await query.edit_message_text("\n".join(lines), reply_markup=kb.back_button())
 
 
 async def show_extra_classes(update, context):
@@ -256,7 +340,7 @@ async def show_extra_classes(update, context):
                 chat_id=update.effective_chat.id,
                 text="📭 Нет активных дополнительных занятий.",
                 reply_markup=kb.back_button(),
- )
+            )
             return
         await context.bot.send_message(
             chat_id=update.effective_chat.id,

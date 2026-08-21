@@ -13,7 +13,7 @@ BOT_DISPLAY_NAME = os.environ.get("BOT_DISPLAY_NAME", "ИБ1-31 — Бот")
 
 WEEKDAYS_RU = ["понедельник", "вторник", "среда", "четверг", "пятница", "суббота", "воскресенье"]
 MONTHS_RU = {
- 1: "января", 2: "февраля", 3: "марта", 4: "апреля", 5: "мая", 6: "июня",
+1: "января", 2: "февраля", 3: "марта", 4: "апреля", 5: "мая", 6: "июня",
     7: "июля", 8: "августа", 9: "сентября", 10: "октября", 11: "ноября", 12: "декабря",
 }
 MONTHS_RU_TO_NUM = {v: k for k, v in MONTHS_RU.items()}
@@ -27,10 +27,10 @@ def get_site_url(shift: str) -> str:
     return "https://menu.sttec.yar.ru/timetable/rasp_first.html"
 
 
-HW_TEXT, HW_DUE = range(2)
-ANN_TEXT, ANN_PHOTO, ANN_CONFIRM = range(2, 5)
-REPLNOTE_TEXT, REPLNOTE_CONFIRM = range(5, 7)
-SCHED_UPLOAD_TEXT, SCHED_FIELD_VALUE = range(7, 9)
-ADMIN_ID, ADMIN_NAME = range(9, 11)
-EXTRA_NAME, EXTRA_CONTENT = range(20, 22)
-SET_GROUP, SET_BOT_NAME, SET_BOT_PHOTO, SET_SUPPORT_USERNAME, SET_SUPPORT_LINK = range(30, 35)
+HW_SUBJECT, HW_TASK, HW_PHOTOS, HW_DUE = range(4)
+ANN_TEXT, ANN_PHOTO, ANN_CONFIRM = range(10, 13)
+REPLNOTE_TEXT, REPLNOTE_CONFIRM = range(20, 22)
+SCHED_UPLOAD_TEXT, SCHED_FIELD_VALUE = range(30, 32)
+ADMIN_ID, ADMIN_NAME = range(40, 42)
+EXTRA_NAME, EXTRA_CONTENT = range(50, 52)
+SET_GROUP, SET_BOT_NAME, SET_BOT_PHOTO = range(60, 63)
