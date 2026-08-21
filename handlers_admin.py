@@ -49,7 +49,7 @@ async def _show_hw_admin_view(context, chat_id, user_id):
     """Отправить список ДЗ (админ-вид)."""
     tasks = await asyncio.to_thread(db.get_all_tasks_db)
     if not tasks:
-        text = "   ДЗ пока нет."
+        text = "📭 ДЗ пока нет."
     else:
         lines = ["📚 Список ДЗ:\n"]
         for idx, item in enumerate(tasks, start=1):
@@ -166,7 +166,7 @@ async def add_hw_task(update, context):
     context.user_data['hw_photos'] = []
     await update.message.reply_text(
         f"📝 Задание: {text}\n\n"
-        f"Прикрепите вложения (фото). Можно до15 штук.\n"
+        f"Прикрепите вложения (фото). Можно до 15 штук.\n"
         f"Когда закончите — нажмите «Без вложений» или просто отправьте следующее сообщение.",
         reply_markup=kb.hw_no_subject_kb(),
     )
@@ -229,8 +229,8 @@ async def add_hw_due(update, context):
             )
             return HW_DUE
 
- # Сохраняем в формате ДД.ММ.ГГ
-    due_str = text # уже валидный
+    # Сохраняем в формате ДД.ММ.ГГ
+    due_str = text  # уже валидный
     subject = context.user_data.get('hw_subject', '')
     task = context.user_data.get('hw_task', '')
     photos = context.user_data.get('hw_photos', [])
@@ -1008,7 +1008,7 @@ async def broadcast_extra_class(update, context):
             if photo_id:
                 await context.bot.send_photo(chat_id=uid, photo=photo_id, caption=f"📚 Новое: <b>{subject}</b>", parse_mode='HTML')
             else:
-                body = f"   Новое: <b>{subject}</b>"
+                body = f"📚 Новое: <b>{subject}</b>"
                 if description:
                     body += f"\n\n{description}"
                 await context.bot.send_message(chat_id=uid, text=body, parse_mode='HTML')
@@ -1197,7 +1197,7 @@ def _parse_schedule_xlsx(file_bytes):
                 "pair_number": pair_num, "subject": str(subj_num).strip(),
                 "teacher": str(teach_num).strip() if teach_num else "",
                 "room": str(room_num).strip() if room_num else "",
- })
+            })
         if subj_den:
             result.setdefault(("Знаменатель", current_day), []).append({
                 "pair_number": pair_num, "subject": str(subj_den).strip(),
@@ -1408,4 +1408,5 @@ async def sched_field_value(update, context):
     await asyncio.to_thread(sched_img.regenerate_all_cached_images)
     await update.message.reply_text("✅ Обновлено.")
     context.user_data.pop('sched_edit', None)
-    await update.message.reply_text("⚙️ Настр
+    await update.message.reply_text("⚙️ Настройки бота", reply_markup=kb.bot_settings_kb())
+    return ConversationHandler.END
