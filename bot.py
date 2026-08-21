@@ -73,16 +73,20 @@ def build_conversations():
         entry_points=[CallbackQueryHandler(ha.add_hw_start, pattern="^a_add_hw$")],
         states={
             HW_TEXT: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, ha.add_hw_text),
+                MessageHandler(filters.TEXT & ~filters.COMMAND & ~filters.Regex("^📋 Меню$"), ha.add_hw_text),
                 MessageHandler(filters.PHOTO, ha.add_hw_text),
                 CallbackQueryHandler(ha.add_hw_no_caption, pattern="^a_hw_no_caption$"),
             ],
             HW_DUE: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, ha.add_hw_due),
+                MessageHandler(filters.TEXT & ~filters.COMMAND & ~filters.Regex("^📋 Меню$"), ha.add_hw_due),
                 CallbackQueryHandler(ha.add_hw_no_due, pattern="^a_hw_no_due$"),
             ],
         },
-        fallbacks=fallback,
+        fallbacks=[
+            MessageHandler(filters.Regex("^📋 Меню$"), hu.show_main_menu_only),
+            CallbackQueryHandler(ha.cancel_conversation, pattern="^cancel_action$"),
+            CallbackQueryHandler(ha.back_to_admin_panel, pattern="^admin_panel$"),
+        ],
         per_message=False,
     )
 
