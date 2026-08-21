@@ -168,7 +168,7 @@ async def add_hw_task(update, context):
         f"📝 Задание: {text}\n\n"
         f"Прикрепите вложения (фото). Можно до 15 штук.\n"
         f"Когда закончите — нажмите «Без вложений» или просто отправьте следующее сообщение.",
-        reply_markup=kb.hw_no_subject_kb(),
+        reply_markup=kb.hw_no_subject_kb(),  # изначально без фото
     )
     return HW_PHOTOS
 
@@ -177,15 +177,16 @@ async def add_hw_photo(update, context):
     if update.message and update.message.photo:
         photos = context.user_data.get('hw_photos', [])
         if len(photos) >= 15:
-            await update.message.reply_text("⚠️ Максимум 15 фото. Жмите «Без вложений».")
+            await update.message.reply_text("⚠️ Максимум 15 фото. Жмите «Готово».")
             return HW_PHOTOS
         photo_id = update.message.photo[-1].file_id
         photos.append(photo_id)
         context.user_data['hw_photos'] = photos
+        # Теперь есть фото → показываем «Готово»
         await update.message.reply_text(
             f"📎 Фото добавлено ({len(photos)}/15). "
-            f"Можете прикрепить ещё или нажмите «Без вложений».",
-            reply_markup=kb.hw_no_subject_kb(),
+            f"Можете прикрепить ещё или нажмите «Готово».",
+            reply_markup=kb.hw_photos_continue_kb(has_photos=True),
         )
         return HW_PHOTOS
     return HW_PHOTOS
@@ -210,7 +211,6 @@ async def add_hw_due(update, context):
         text = None
     date_obj = db.parse_due_date(text) if text else None
     if text and not date_obj:
-        # Невалидная дата — шутим
         await update.message.reply_text(
             "   Живи здесь и сейчас!\n"
             "Не выдумывай того, чего нет. Введи реальную дату в формате ДД.ММ.ГГ "
@@ -229,8 +229,7 @@ async def add_hw_due(update, context):
             )
             return HW_DUE
 
-    # Сохраняем в формате ДД.ММ.ГГ
-    due_str = text  # уже валидный
+    due_str = text
     subject = context.user_data.get('hw_subject', '')
     task = context.user_data.get('hw_task', '')
     photos = context.user_data.get('hw_photos', [])

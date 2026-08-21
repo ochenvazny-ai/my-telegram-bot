@@ -161,11 +161,12 @@ def add_task_db(subject, task_text, due_date_str, photos=None):
     """Добавляет ДЗ: предмет, задание, срок (строка 'ДД.ММ.ГГ' или None), список photo_id."""
     try:
         photos_arr = photos or []
+        first_photo = photos_arr[0] if photos_arr else None
         with get_cursor(commit=True) as cur:
             cur.execute(
                 "INSERT INTO homework (subject, task, due_date, photo_id, caption, photos, created_at) "
                 "VALUES (%s, %s, %s, %s, %s, %s, NOW()) RETURNING id;",
-                (subject, task_text, due_date_str, photos_arr[0] if photos_arr else None,
+                (subject, task_text, due_date_str, first_photo,
                  task_text if photos_arr else None, photos_arr),
             )
             return cur.fetchone()["id"]

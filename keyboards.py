@@ -160,7 +160,7 @@ def banned_paginated_kb(rows, page):
         user_id, _u, _f, display_name = r
         name = display_name or _u or _f or "Без имени"
         short = name[:25] + "..." if len(name) > 25 else name
-        buttons.append([InlineKeyboardButton(f"   {short} (ID:{user_id})", callback_data=f"unbanuser_{user_id}")])
+        buttons.append([InlineKeyboardButton(f"🚫 {short} (ID:{user_id})", callback_data=f"unbanuser_{user_id}")])
     nav = []
     if page > 0:
         nav.append(InlineKeyboardButton("◀️", callback_data=f"userspage_{page - 1}"))
@@ -202,12 +202,26 @@ def hw_admin_view_kb(has_tasks=False):
 
 def hw_date_input_kb():
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("🚫 Без срока", callback_data="hw_no_due")],
+        [InlineKeyboardButton("🚫 Без срока", callback_data="a_hw_no_due")],
         [InlineKeyboardButton("❌ Отмена", callback_data="cancel_action")],
     ])
 
 
 def hw_no_subject_kb():
+    """Кнопка 'Без вложений' для старта (без фото)."""
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("⏭ Без вложений", callback_data="hw_no_more_photos")],
+        [InlineKeyboardButton("❌ Отмена", callback_data="cancel_action")],
+    ])
+
+
+def hw_photos_continue_kb(has_photos):
+    """Кнопка 'Готово' если есть фото, иначе 'Без вложений'."""
+    if has_photos:
+        return InlineKeyboardMarkup([
+            [InlineKeyboardButton("✅ Готово", callback_data="hw_no_more_photos")],
+            [InlineKeyboardButton("❌ Отмена", callback_data="cancel_action")],
+        ])
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("⏭ Без вложений", callback_data="hw_no_more_photos")],
         [InlineKeyboardButton("❌ Отмена", callback_data="cancel_action")],
@@ -270,7 +284,7 @@ def bot_settings_kb():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("🔁 Смена", callback_data="a_shift")],
         [InlineKeyboardButton("⚙️ Расписание", callback_data="a_sched_menu")],
-        [InlineKeyboardButton("   Группа", callback_data="a_set_group")],
+        [InlineKeyboardButton("📛 Группа", callback_data="a_set_group")],
         [InlineKeyboardButton("✏️ Название бота", callback_data="a_set_botname")],
         [InlineKeyboardButton("🖼 Картинка бота", callback_data="a_set_botphoto")],
         [InlineKeyboardButton("🔙 Назад", callback_data="admin_panel")],
@@ -322,7 +336,7 @@ def schedule_edit_menu_kb():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("📤 Загрузить из Excel", callback_data="sched_upload")],
         [InlineKeyboardButton("📝 Редактировать по дням", callback_data="sched_by_day")],
-        [InlineKeyboardButton("   Удалить пары на день", callback_data="a_del_all_day")],
+        [InlineKeyboardButton("🗑 Удалить пары на день", callback_data="a_del_all_day")],
         [InlineKeyboardButton("📣 Разослать замены", callback_data="force_repl_broadcast")],
         [InlineKeyboardButton("🔙 Назад", callback_data="a_bot_settings")],
     ])
